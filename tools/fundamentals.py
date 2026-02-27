@@ -205,7 +205,7 @@ def _dividends(m: dict) -> tuple[str, dict] | None:
     return sig, {
         "signal": sig,
         "score": f"{sc}/{len(valid)}",
-        "details": " | ".join([_fmt("Dividend Yield", dy), _fmt("Payout Ratio", pr)]),
+        "details": " | ".join([_fmt("Dividend Yield", dy/100), _fmt("Payout Ratio", pr)]),
     }
 
 
