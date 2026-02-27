@@ -6,7 +6,7 @@ import {
   Cell
 } from "recharts";
 
-const API_BASE = "https://your-railway-url.up.railway.app";
+const API_BASE = "finbot-production-5739.up.railway.app";
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
 const SIG = {
