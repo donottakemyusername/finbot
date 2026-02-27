@@ -425,13 +425,14 @@ class StockAnalystChatbot:
         self.stream   = stream
         self.model    = "claude-sonnet-4-6"
 
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str) -> tuple[str, dict]:
         """
         Send a message and get a response.
         Handles multi-step tool calling automatically.
         Returns the final text response.
         """
         self.history.append({"role": "user", "content": user_message})
+        self._tool_data: dict = {}
 
         while True:
             response = self.client.messages.create(
@@ -461,6 +462,12 @@ class StockAnalystChatbot:
                             "tool_use_id": block.id,
                             "content":     result,
                         })
+                        # Store raw parsed result for frontend visualizations
+                        try:
+                            parsed = json.loads(result)
+                            self._tool_data[block.name] = parsed
+                        except Exception:
+                            pass
 
                 # Send tool results back to Claude
                 self.history.append({
@@ -476,10 +483,10 @@ class StockAnalystChatbot:
                     if hasattr(block, "text")
                 )
                 self.history.append({"role": "assistant", "content": text})
-                return text
+                return text, self._tool_data
 
             else:
-                return f"Unexpected stop reason: {response.stop_reason}"
+                return f"Unexpected stop reason: {response.stop_reason}", {}
 
     def reset(self):
         """Clear conversation history."""
@@ -542,13 +549,13 @@ def create_api():
         import chatbot as _self
         _self.dispatch_tool = tracking_dispatch
         try:
-            response = bot.chat(req.message)
+            response, tool_data = bot.chat(req.message)
         except Exception as e:
             _self.dispatch_tool = original_dispatch
-            return {"response": f"Error: {str(e)}", "tool_calls": tool_calls_made, "session_id": req.session_id}
+            return {"response": f"Error: {str(e)}", "tool_calls": tool_calls_made, "tool_data": {}, "session_id": req.session_id}
         _self.dispatch_tool = original_dispatch
 
-        return {"response": response, "tool_calls": tool_calls_made, "session_id": req.session_id}
+        return {"response": response, "tool_calls": tool_calls_made, "tool_data": tool_data, "session_id": req.session_id}
 
     @app.delete("/chat/{session_id}")
     def reset_session(session_id: str):

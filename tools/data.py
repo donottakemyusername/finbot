@@ -66,6 +66,45 @@ def get_ticker_info(ticker: str) -> dict[str, Any]:
     return t.info or {}
 
 
+def get_financial_metrics_from_yfinance(ticker: str) -> list[dict]:
+    """Build a financial metrics dict from yfinance .info — used as fallback."""
+    info = get_ticker_info(ticker)
+    if not info:
+        return []
+    # Map yfinance keys to financialdatasets field names
+    metrics = {
+        'ticker':                   ticker.upper(),
+        'report_period':            'ttm',
+        # Profitability
+        'return_on_equity':         info.get('returnOnEquity'),
+        'net_margin':               info.get('profitMargins'),
+        'operating_margin':         info.get('operatingMargins'),
+        'return_on_assets':         info.get('returnOnAssets'),
+        'asset_turnover':           None,
+        # Growth
+        'revenue_growth':           info.get('revenueGrowth'),
+        'earnings_growth':          info.get('earningsGrowth'),
+        'book_value_growth':        None,
+        # Health
+        'current_ratio':            info.get('currentRatio'),
+        'debt_to_equity':           (info.get('debtToEquity') or 0) / 100 if info.get('debtToEquity') else None,
+        'free_cash_flow_per_share': info.get('freeCashflow') / max(info.get('sharesOutstanding', 1), 1) if info.get('freeCashflow') else None,
+        'earnings_per_share':       info.get('trailingEps'),
+        # Valuation
+        'price_to_earnings_ratio':  info.get('trailingPE'),
+        'price_to_book_ratio':      info.get('priceToBook'),
+        'price_to_sales_ratio':     info.get('priceToSalesTrailing12Months'),
+        # Dividends
+        'dividend_yield':           info.get('dividendYield'),
+        'payout_ratio':             info.get('payoutRatio'),
+        # Market
+        'market_cap':               info.get('marketCap'),
+        'enterprise_value':         info.get('enterpriseValue'),
+        'ebitda':                   info.get('ebitda'),
+    }
+    return [metrics]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Financial Datasets helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -90,12 +129,69 @@ def get_financial_metrics(
     limit: int = 8,
     end_date: str | None = None,
 ) -> list[dict]:
-    """Return a list of financial metric snapshots (most recent first)."""
-    params: dict = {"ticker": ticker, "period": period, "limit": limit}
-    if end_date:
-        params["report_period_lte"] = end_date
-    data = _fd_get("/financial-metrics/search", params)
-    return data.get("financial_metrics", [])
+    """Return financial metrics — tries financialdatasets.ai first, falls back to yfinance."""
+    if FD_API_KEY:
+        try:
+            params: dict = {"ticker": ticker, "period": period, "limit": limit}
+            if end_date:
+                params["report_period_lte"] = end_date
+            data = _fd_get("/financial-metrics/search", params)
+            metrics = data.get("financial_metrics", [])
+            if metrics:
+                return metrics
+        except Exception:
+            pass
+    # Fallback: build metrics from yfinance
+    return get_financial_metrics_from_yfinance(ticker)
+
+
+def _yf_financials(ticker: str) -> tuple[list[dict], list[dict], list[dict]]:
+    """Pull income, balance sheet, cash flow from yfinance as fallback."""
+    t = yf.Ticker(ticker)
+    info = t.info or {}
+
+    def _row(d: dict) -> dict:
+        return {k: (float(v) if hasattr(v, '__float__') else v) for k, v in d.items()}
+
+    # Income statement fields
+    inc = [{
+        'ticker':           ticker.upper(),
+        'report_period':    'ttm',
+        'revenue':          info.get('totalRevenue'),
+        'net_income':       info.get('netIncomeToCommon'),
+        'operating_income': info.get('operatingCashflow'),
+        'ebitda':           info.get('ebitda'),
+        'eps':              info.get('trailingEps'),
+        'earnings_growth':  info.get('earningsGrowth'),
+        'revenue_growth':   info.get('revenueGrowth'),
+    }]
+
+    # Balance sheet fields
+    bs = [{
+        'ticker':                    ticker.upper(),
+        'report_period':             'ttm',
+        'total_assets':              info.get('totalAssets'),
+        'total_liabilities':         info.get('totalDebt'),
+        'total_equity':              info.get('bookValue'),
+        'cash_and_equivalents':      info.get('totalCash'),
+        'book_value_per_share':      info.get('bookValue'),
+        'shares_outstanding':        info.get('sharesOutstanding'),
+        'current_assets':            info.get('currentAssets'),
+        'current_liabilities':       info.get('currentLiabilities'),
+        'long_term_debt':            info.get('longTermDebt'),
+    }]
+
+    # Cash flow fields
+    cf = [{
+        'ticker':              ticker.upper(),
+        'report_period':       'ttm',
+        'free_cash_flow':      info.get('freeCashflow'),
+        'operating_cash_flow': info.get('operatingCashflow'),
+        'capital_expenditure': info.get('capitalExpenditures'),
+        'net_income':          info.get('netIncomeToCommon'),
+    }]
+
+    return inc, bs, cf
 
 
 def get_income_statements(
@@ -103,8 +199,15 @@ def get_income_statements(
     period: str = "ttm",
     limit: int = 5,
 ) -> list[dict]:
-    data = _fd_get("/income-statements/search", {"ticker": ticker, "period": period, "limit": limit})
-    return data.get("income_statements", [])
+    if FD_API_KEY:
+        try:
+            data = _fd_get("/income-statements/search", {"ticker": ticker, "period": period, "limit": limit})
+            result = data.get("income_statements", [])
+            if result: return result
+        except Exception:
+            pass
+    inc, _, _ = _yf_financials(ticker)
+    return inc
 
 
 def get_balance_sheets(
@@ -112,8 +215,15 @@ def get_balance_sheets(
     period: str = "ttm",
     limit: int = 5,
 ) -> list[dict]:
-    data = _fd_get("/balance-sheets/search", {"ticker": ticker, "period": period, "limit": limit})
-    return data.get("balance_sheets", [])
+    if FD_API_KEY:
+        try:
+            data = _fd_get("/balance-sheets/search", {"ticker": ticker, "period": period, "limit": limit})
+            result = data.get("balance_sheets", [])
+            if result: return result
+        except Exception:
+            pass
+    _, bs, _ = _yf_financials(ticker)
+    return bs
 
 
 def get_cash_flow_statements(
@@ -121,8 +231,15 @@ def get_cash_flow_statements(
     period: str = "ttm",
     limit: int = 5,
 ) -> list[dict]:
-    data = _fd_get("/cash-flow-statements/search", {"ticker": ticker, "period": period, "limit": limit})
-    return data.get("cash_flow_statements", [])
+    if FD_API_KEY:
+        try:
+            data = _fd_get("/cash-flow-statements/search", {"ticker": ticker, "period": period, "limit": limit})
+            result = data.get("cash_flow_statements", [])
+            if result: return result
+        except Exception:
+            pass
+    _, _, cf = _yf_financials(ticker)
+    return cf
 
 
 def get_market_cap(ticker: str, end_date: str | None = None) -> float | None:

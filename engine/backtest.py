@@ -62,6 +62,18 @@ class BacktestResult:
             "avg_hold_days": round(self.avg_hold_days, 1),
             "max_drawdown_%": round(self.max_drawdown_pct, 1),
             "sharpe": round(self.sharpe, 2),
+            "trades": [
+                {
+                    "entry_date":   t.entry_date,
+                    "exit_date":    t.exit_date,
+                    "entry_price":  round(t.entry_price, 2),
+                    "exit_price":   round(t.exit_price, 2),
+                    "pct_return":   round(t.pct_return, 2),
+                    "holding_days": t.holding_days,
+                    "win":          t.win,
+                }
+                for t in self.trades
+            ],
         }
 
 

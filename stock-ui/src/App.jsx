@@ -38,16 +38,18 @@ const TOOL_LABELS = {
 };
 
 const GRID  = { stroke: "rgba(255,255,255,0.06)" };
-const ATICK = { fill: "rgba(255,255,255,0.3)", fontSize: 10 };
+// MOBILE: smaller tick font
+const ATICK = { fill: "rgba(255,255,255,0.3)", fontSize: 9 };
 
 // ─── Shared tooltip ───────────────────────────────────────────────────────────
 const Tip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-[#1a1f2e] border border-white/15 rounded-lg px-3 py-2 text-xs shadow-xl">
-      {label && <p className="text-white/40 mb-1">{label}</p>}
+    // MOBILE: constrain width so tooltip doesn't overflow screen
+    <div className="bg-[#1a1f2e] border border-white/15 rounded-lg px-2 py-1.5 text-xs shadow-xl max-w-[150px]">
+      {label && <p className="text-white/40 mb-1 truncate">{label}</p>}
       {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color || "#fff" }}>
+        <p key={i} style={{ color: p.color || "#fff" }} className="truncate">
           {p.name}: {typeof p.value === "number" ? p.value.toFixed(2) : p.value}
         </p>
       ))}
@@ -57,7 +59,8 @@ const Tip = ({ active, payload, label }) => {
 
 // ─── Section wrapper ──────────────────────────────────────────────────────────
 const Section = ({ title, children }) => (
-  <div className="bg-white/4 border border-white/8 rounded-xl p-4 space-y-3">
+  // MOBILE: smaller padding (p-3) grows to p-4 on sm+
+  <div className="bg-white/4 border border-white/8 rounded-xl p-3 sm:p-4 space-y-3">
     <p className="text-white/50 text-xs font-semibold uppercase tracking-wider">{title}</p>
     {children}
   </div>
@@ -69,7 +72,8 @@ function SignalGrid({ indicators }) {
   if (!entries.length) return null;
   return (
     <Section title="Signal Summary">
-      <div className="grid grid-cols-2 gap-2">
+      {/* MOBILE: 1 col on mobile → 2 col on sm+ */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {entries.map(([key, val]) => {
           const c = sc(val.signal);
           return (
@@ -89,7 +93,11 @@ function WinRateChart({ indicators }) {
   const data = Object.entries(indicators)
     .filter(([, v]) => v.backtest?.["win_rate_%"] !== undefined)
     .map(([key, val]) => ({
-      name: (val.name || key).replace(/ \d+.*/, ""),
+      // MOBILE: shorten names so Y-axis labels fit
+      name: (val.name || key)
+        .replace(/ \d+.*/, "")
+        .replace("Bollinger Bands", "BB")
+        .replace("Moving Average", "MA"),
       winRate: val.backtest["win_rate_%"] || 0,
       signal: val.signal,
       trades: val.backtest.n_trades || 0,
@@ -98,21 +106,28 @@ function WinRateChart({ indicators }) {
 
   return (
     <Section title="5-Year Backtest Win Rates">
-      <ResponsiveContainer width="100%" height={Math.max(90, data.length * 38)}>
-        <BarChart data={data} layout="vertical" margin={{ left: 8, right: 40 }}>
-          <CartesianGrid {...GRID} horizontal={false} />
-          <XAxis type="number" domain={[0, 100]} tick={ATICK} tickFormatter={v => `${v}%`} />
-          <YAxis type="category" dataKey="name" tick={ATICK} width={85} />
-          <Tooltip content={<Tip />} formatter={v => [`${v}%`, "Win Rate"]} />
-          <ReferenceLine x={50} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
-          <Bar dataKey="winRate" radius={[0, 4, 4, 0]} name="Win Rate">
-            {data.map((d, i) => <Cell key={i} fill={sc(d.signal).hex} fillOpacity={0.8} />)}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <div className="flex flex-wrap gap-3 pt-1 border-t border-white/8">
+      {/* MOBILE: allow horizontal scroll if chart is very wide */}
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: 260 }}>
+          <ResponsiveContainer width="100%" height={Math.max(90, data.length * 38)}>
+            <BarChart data={data} layout="vertical" margin={{ left: 4, right: 36, top: 0, bottom: 0 }}>
+              <CartesianGrid {...GRID} horizontal={false} />
+              <XAxis type="number" domain={[0, 100]} tick={ATICK} tickFormatter={v => `${v}%`} />
+              {/* MOBILE: narrower Y-axis label area (70 vs 85) */}
+              <YAxis type="category" dataKey="name" tick={ATICK} width={70} />
+              <Tooltip content={<Tip />} formatter={v => [`${v}%`, "Win Rate"]} />
+              <ReferenceLine x={50} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
+              <Bar dataKey="winRate" radius={[0, 4, 4, 0]} name="Win Rate">
+                {data.map((d, i) => <Cell key={i} fill={sc(d.signal).hex} fillOpacity={0.8} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 pt-1 border-t border-white/8">
+        {/* MOBILE: "t" instead of "trades" to save space */}
         {data.map((d, i) => (
-          <span key={i} className="text-xs text-white/30">{d.name}: <span className="text-white/50">{d.trades} trades</span></span>
+          <span key={i} className="text-xs text-white/30">{d.name}: <span className="text-white/50">{d.trades}t</span></span>
         ))}
       </div>
     </Section>
@@ -135,10 +150,11 @@ function EquityCurve({ trades, name, winRate, totalReturn, buyHold }) {
 
   return (
     <Section title={`${name} — Equity Curve`}>
-      <div className="flex gap-4 text-xs mb-1">
+      {/* MOBILE: flex-wrap so stats don't overflow on narrow screens */}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs mb-1">
         <span style={{ color: col }}>Strategy: {totalReturn > 0 ? "+" : ""}{totalReturn?.toFixed(1)}%</span>
         <span className="text-indigo-400">B&H: {buyHold > 0 ? "+" : ""}{buyHold?.toFixed(1)}%</span>
-        <span className="text-white/40">Win Rate: <span className="text-white/70">{winRate?.toFixed(1)}%</span></span>
+        <span className="text-white/40">Win: <span className="text-white/70">{winRate?.toFixed(1)}%</span></span>
         <span className="text-white/40">Trades: <span className="text-white/70">{trades.length}</span></span>
       </div>
       <ResponsiveContainer width="100%" height={130}>
@@ -150,8 +166,9 @@ function EquityCurve({ trades, name, winRate, totalReturn, buyHold }) {
             </linearGradient>
           </defs>
           <CartesianGrid {...GRID} />
-          <XAxis dataKey="i" tick={ATICK} label={{ value: "Trade #", fill: "rgba(255,255,255,0.2)", fontSize: 9, position: "insideBottomRight", offset: -4 }} />
-          <YAxis tick={ATICK} tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} />
+          <XAxis dataKey="i" tick={ATICK} />
+          {/* MOBILE: narrower Y-axis (42 vs default) */}
+          <YAxis tick={ATICK} tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} width={42} />
           <Tooltip content={<Tip />} formatter={v => [`$${v.toLocaleString()}`, "Portfolio"]} labelFormatter={l => `Trade #${l}`} />
           <ReferenceLine y={10000} stroke="rgba(255,255,255,0.15)" strokeDasharray="4 4" />
           <Area type="monotone" dataKey="v" stroke={col} fill={`url(#${id})`} strokeWidth={1.5} dot={false} name="Portfolio" />
@@ -173,10 +190,12 @@ function FundamentalsRadar({ sections }) {
 
   return (
     <Section title="Fundamentals Radar">
-      <ResponsiveContainer width="100%" height={200}>
+      {/* MOBILE: slightly shorter chart (180 vs 200) */}
+      <ResponsiveContainer width="100%" height={180}>
         <RadarChart data={data}>
           <PolarGrid stroke="rgba(255,255,255,0.1)" />
-          <PolarAngleAxis dataKey="subject" tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 10 }} />
+          {/* MOBILE: smaller axis label font */}
+          <PolarAngleAxis dataKey="subject" tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 9 }} />
           <Radar dataKey="score" stroke="#818cf8" fill="#818cf8" fillOpacity={0.2} strokeWidth={1.5} name="Score" />
           <Tooltip content={<Tip />} formatter={v => [v >= 80 ? "Bullish" : v >= 40 ? "Neutral" : "Bearish", "Signal"]} />
         </RadarChart>
@@ -186,8 +205,9 @@ function FundamentalsRadar({ sections }) {
           const c = sc(val.signal);
           return (
             <div key={key} className="flex gap-2 text-xs">
-              <span className={`font-semibold flex-shrink-0 w-20 ${c.text}`}>{sl(val.signal)}</span>
-              <span className="text-white/40">{val.details}</span>
+              {/* MOBILE: narrower signal label (w-16 vs w-20) */}
+              <span className={`font-semibold flex-shrink-0 w-16 ${c.text}`}>{sl(val.signal)}</span>
+              <span className="text-white/40 leading-relaxed">{val.details}</span>
             </div>
           );
         })}
@@ -201,36 +221,46 @@ function ValuationGapChart({ methods, weightedGap }) {
   const data = Object.entries(methods)
     .filter(([, v]) => v.gap_pct !== null && v.gap_pct !== undefined)
     .map(([key, val]) => ({
-      name: key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()),
+      // MOBILE: abbreviate long method names
+      name: key.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())
+               .replace("Owner Earnings", "OE")
+               .replace("Residual Income Model", "RIM")
+               .replace("Ev Ebitda", "EV/EBITDA"),
       gap: val.gap_pct,
       signal: val.signal,
     }));
   if (!data.length) return null;
 
   return (
-    <Section title="Intrinsic Value Gap vs Market Cap">
-      <div className="flex justify-between items-center">
-        <p className="text-white/30 text-xs">+gap = undervalued, −gap = overvalued (±15% threshold)</p>
+    <Section title="Intrinsic Value Gap">
+      {/* MOBILE: wrap header so it doesn't overflow */}
+      <div className="flex flex-wrap justify-between items-center gap-1">
+        <p className="text-white/30 text-xs">+ = undervalued · − = overvalued</p>
         <span className={`text-sm font-bold ${weightedGap > 0 ? "text-emerald-400" : "text-red-400"}`}>
           Weighted: {weightedGap > 0 ? "+" : ""}{weightedGap?.toFixed(1)}%
         </span>
       </div>
-      <ResponsiveContainer width="100%" height={Math.max(110, data.length * 44)}>
-        <BarChart data={data} layout="vertical" margin={{ left: 8, right: 50 }}>
-          <CartesianGrid {...GRID} horizontal={false} />
-          <XAxis type="number" tick={ATICK} tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} />
-          <YAxis type="category" dataKey="name" tick={ATICK} width={115} />
-          <Tooltip content={<Tip />} formatter={v => [`${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`, "Gap"]} />
-          <ReferenceLine x={0}    stroke="rgba(255,255,255,0.25)" />
-          <ReferenceLine x={15}   stroke="#10b981" strokeDasharray="3 3" strokeOpacity={0.5} />
-          <ReferenceLine x={-15}  stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.5} />
-          <Bar dataKey="gap" radius={[0, 4, 4, 0]} name="Gap %">
-            {data.map((d, i) => (
-              <Cell key={i} fill={d.gap > 15 ? "#10b981" : d.gap < -15 ? "#ef4444" : "#f59e0b"} fillOpacity={0.8} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+      <div className="overflow-x-auto">
+        <div style={{ minWidth: 260 }}>
+          <ResponsiveContainer width="100%" height={Math.max(110, data.length * 44)}>
+            <BarChart data={data} layout="vertical" margin={{ left: 4, right: 44, top: 0, bottom: 0 }}>
+              <CartesianGrid {...GRID} horizontal={false} />
+              <XAxis type="number" tick={ATICK} tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} />
+              {/* MOBILE: narrower Y-axis (72 vs 115) */}
+              <YAxis type="category" dataKey="name" tick={ATICK} width={72} />
+              <Tooltip content={<Tip />} formatter={v => [`${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`, "Gap"]} />
+              <ReferenceLine x={0}    stroke="rgba(255,255,255,0.25)" />
+              <ReferenceLine x={15}   stroke="#10b981" strokeDasharray="3 3" strokeOpacity={0.5} />
+              <ReferenceLine x={-15}  stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.5} />
+              <Bar dataKey="gap" radius={[0, 4, 4, 0]} name="Gap %">
+                {data.map((d, i) => (
+                  <Cell key={i} fill={d.gap > 15 ? "#10b981" : d.gap < -15 ? "#ef4444" : "#f59e0b"} fillOpacity={0.8} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
     </Section>
   );
 }
@@ -241,32 +271,35 @@ function OverviewCard({ data }) {
   const isUp = chg >= 0;
   return (
     <Section title="Company Overview">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-lg font-bold text-white">{data.name}</p>
-          <p className="text-white/40 text-xs mt-0.5">{data.sector} · {data.industry}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {/* MOBILE: truncate long company names */}
+          <p className="text-base sm:text-lg font-bold text-white truncate">{data.name}</p>
+          <p className="text-white/40 text-xs mt-0.5 truncate">{data.sector} · {data.industry}</p>
         </div>
         <div className="text-right flex-shrink-0">
-          <p className="text-xl font-bold text-white">${data.price}</p>
+          <p className="text-lg sm:text-xl font-bold text-white">${data.price}</p>
           <p className={`text-xs font-semibold ${isUp ? "text-emerald-400" : "text-red-400"}`}>
             {isUp ? "▲" : "▼"} {Math.abs(chg)?.toFixed(1)}% (1Y)
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-3 border-t border-white/8 pt-3">
+      <div className="grid grid-cols-3 gap-2 border-t border-white/8 pt-3">
         {[
           ["52W High",   `$${data["52w_high"]}`],
           ["52W Low",    `$${data["52w_low"]}`],
-          ["Market Cap", data.market_cap ? `$${(data.market_cap / 1e9).toFixed(1)}B` : "N/A"],
+          // MOBILE: "Mkt Cap" instead of "Market Cap" saves space
+          ["Mkt Cap",    data.market_cap ? `$${(data.market_cap / 1e9).toFixed(1)}B` : "N/A"],
         ].map(([label, val]) => (
           <div key={label}>
             <p className="text-white/30 text-xs">{label}</p>
-            <p className="text-white/80 text-sm font-semibold">{val}</p>
+            <p className="text-white/80 text-xs sm:text-sm font-semibold">{val}</p>
           </div>
         ))}
       </div>
       {data.description && (
-        <p className="text-white/35 text-xs leading-relaxed border-t border-white/8 pt-2">{data.description}</p>
+        // MOBILE: clamp description to 4 lines, remove clamp on sm+
+        <p className="text-white/35 text-xs leading-relaxed border-t border-white/8 pt-2 line-clamp-4 sm:line-clamp-none">{data.description}</p>
       )}
     </Section>
   );
@@ -277,28 +310,33 @@ function VerdictCard({ data }) {
   if (!data?.ai_verdict) return null;
   const cfg = VERDICT_CONFIG[data.ai_verdict] || VERDICT_CONFIG.HOLD;
   return (
-    <div className={`rounded-2xl bg-gradient-to-r ${cfg.gradient} p-5 space-y-4`}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <span className="text-4xl font-black">{cfg.icon} {data.ai_verdict}</span>
+    // MOBILE: smaller padding on mobile
+    <div className={`rounded-2xl bg-gradient-to-r ${cfg.gradient} p-4 sm:p-5 space-y-3 sm:space-y-4`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          {/* MOBILE: smaller verdict text */}
+          <span className="text-3xl sm:text-4xl font-black">{cfg.icon} {data.ai_verdict}</span>
           <div>
             <p className="text-white/60 text-xs">AI Confidence</p>
-            <p className="text-xl font-bold">{data.ai_confidence}%</p>
+            <p className="text-lg sm:text-xl font-bold">{data.ai_confidence}%</p>
           </div>
         </div>
-        <div className="text-right text-xs text-white/50">
+        <div className="text-right text-xs text-white/50 flex-shrink-0">
           <p className="font-mono font-bold text-white/80">{data.ticker}</p>
-          <p>${data.price} · {data.as_of}</p>
+          <p>${data.price}</p>
+          {/* MOBILE: hide date on mobile — saves space */}
+          <p className="hidden sm:block">{data.as_of}</p>
         </div>
       </div>
       <div className="w-full h-1.5 bg-white/20 rounded-full">
         <div className="h-full bg-white/50 rounded-full" style={{ width: `${data.ai_confidence}%` }} />
       </div>
       {data.reasoning && (
-        <p className="text-white/85 text-sm leading-relaxed border-t border-white/20 pt-3">{data.reasoning}</p>
+        <p className="text-white/85 text-xs sm:text-sm leading-relaxed border-t border-white/20 pt-3">{data.reasoning}</p>
       )}
       {(data.supporting_arguments?.length > 0 || data.key_risks?.length > 0) && (
-        <div className="grid grid-cols-2 gap-4">
+        // MOBILE: stack columns on mobile, side-by-side on sm+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div>
             <p className="text-white/50 text-xs uppercase tracking-wider mb-2">Supporting</p>
             <ul className="space-y-1.5">
@@ -421,17 +459,19 @@ function MDText({ text }) {
 function Bubble({ msg }) {
   const isUser = msg.role === "user";
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} gap-3`}>
+    // MOBILE: smaller gap
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} gap-2 sm:gap-3`}>
       {!isUser && (
-        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-1">A</div>
+        // MOBILE: smaller avatar
+        <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-xs font-bold flex-shrink-0 mt-1">A</div>
       )}
-      <div className={`max-w-[85%] flex flex-col gap-2 ${isUser ? "items-end" : "items-start w-full"}`}>
+      <div className={`max-w-[88%] sm:max-w-[85%] flex flex-col gap-2 ${isUser ? "items-end" : "items-start w-full"}`}>
 
-        {/* Tool pills */}
+        {/* Tool pills — scroll horizontally on mobile */}
         {msg.tool_calls?.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex gap-1 overflow-x-auto pb-0.5 max-w-full">
             {msg.tool_calls.map((t, i) => (
-              <span key={i} className="inline-flex items-center gap-1 bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs px-2 py-0.5 rounded-full">
+              <span key={i} className="inline-flex items-center gap-1 bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
                 {TOOL_LABELS[t] || t}
               </span>
             ))}
@@ -439,7 +479,7 @@ function Bubble({ msg }) {
         )}
 
         {/* Text */}
-        <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed w-full ${
+        <div className={`rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 text-sm leading-relaxed w-full ${
           isUser
             ? "bg-blue-600 text-white rounded-tr-sm max-w-fit"
             : "bg-white/8 border border-white/10 text-white/85 rounded-tl-sm"
@@ -447,12 +487,11 @@ function Bubble({ msg }) {
           {isUser ? msg.content : <MDText text={msg.content} />}
         </div>
 
-        {/* Charts — one block per tool */}
+        {/* Charts */}
         {msg.tool_calls?.map((toolName, i) => {
           const d = msg.tool_data?.[toolName];
           return d ? <div key={i} className="w-full"><ToolViz toolName={toolName} data={d} /></div> : null;
         })}
-
       </div>
     </div>
   );
@@ -460,8 +499,8 @@ function Bubble({ msg }) {
 
 function TypingDots() {
   return (
-    <div className="flex gap-3 items-start">
-      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-xs font-bold flex-shrink-0">A</div>
+    <div className="flex gap-2 sm:gap-3 items-start">
+      <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-xs font-bold flex-shrink-0">A</div>
       <div className="bg-white/8 border border-white/10 rounded-2xl rounded-tl-sm px-4 py-3">
         <div className="flex gap-1 items-center h-4">
           {[0, 1, 2].map(i => (
@@ -494,7 +533,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (textareaRef.current) {
-      textareaRef.current.style.height = "48px";
+      textareaRef.current.style.height = "44px";
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
     }
   }, [input]);
@@ -527,39 +566,58 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0d1117] text-white flex flex-col" style={{ fontFamily: "system-ui,sans-serif" }}>
+    // MOBILE: use 100dvh (dynamic viewport height) — this is the key fix.
+    // Unlike 100vh, dvh accounts for the mobile browser's collapsing address bar
+    // so the input bar is never hidden behind it.
+    // safe-area-inset handles the notch and home indicator on iOS.
+    <div
+      className="bg-[#0d1117] text-white flex flex-col"
+      style={{
+        fontFamily: "system-ui,sans-serif",
+        height: "100dvh",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}
+    >
 
       {/* Header */}
-      <div className="border-b border-white/8 px-6 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center font-bold text-sm">A</div>
+      <div className="border-b border-white/8 px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center font-bold text-sm">A</div>
           <div>
             <p className="font-semibold text-sm">AlphaLens</p>
-            <p className="text-white/30 text-xs">Claude Sonnet · MCP tool-calling</p>
+            {/* MOBILE: hide subtitle on small screens */}
+            <p className="text-white/30 text-xs hidden sm:block">Claude Sonnet · MCP tool-calling</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <div className={`w-2 h-2 rounded-full ${status === "ok" ? "bg-emerald-400" : status === "error" ? "bg-red-400" : "bg-amber-400 animate-pulse"}`} />
-          <span className="text-white/30 text-xs">{status === "ok" ? "Connected" : status === "error" ? "Offline" : "Connecting…"}</span>
+          {/* MOBILE: shorter status labels */}
+          <span className="text-white/30 text-xs">
+            {status === "ok" ? "Live" : status === "error" ? "Offline" : "…"}
+          </span>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+      {/* MOBILE: overscroll-contain prevents the whole page bouncing on iOS */}
+      <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="max-w-3xl mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
           {messages.map((m, i) => <Bubble key={i} msg={m} />)}
           {loading && <TypingDots />}
           <div ref={endRef} />
         </div>
       </div>
 
-      {/* Quick actions — only on first load */}
+      {/* Quick actions */}
       {messages.length === 1 && (
-        <div className="max-w-3xl mx-auto px-6 pb-3 w-full">
-          <div className="flex flex-wrap gap-2">
+        <div className="max-w-3xl mx-auto px-3 sm:px-6 pb-2 w-full">
+          {/* MOBILE: horizontal scroll instead of wrapping — keeps buttons on one line */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
             {QUICK.map((q, i) => (
               <button key={i} onClick={() => send(q)}
-                className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-full px-3 py-1.5 text-white/55 hover:text-white/90 transition-all">
+                // MOBILE: touch-manipulation removes the 300ms tap delay on iOS
+                className="text-xs bg-white/5 hover:bg-white/10 active:bg-white/15 border border-white/10 hover:border-white/20 rounded-full px-3 py-1.5 text-white/55 hover:text-white/90 transition-all whitespace-nowrap flex-shrink-0 touch-manipulation">
                 {q}
               </button>
             ))}
@@ -568,20 +626,33 @@ export default function App() {
       )}
 
       {/* Input */}
-      <div className="border-t border-white/8 px-6 py-4 flex-shrink-0">
-        <div className="max-w-3xl mx-auto flex gap-3 items-end">
+      <div className="border-t border-white/8 px-3 sm:px-6 py-3 sm:py-4 flex-shrink-0">
+        <div className="max-w-3xl mx-auto flex gap-2 sm:gap-3 items-end">
           <textarea
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            onKeyDown={e => {
+              // MOBILE: only send on Enter on desktop — on mobile, Enter adds newline
+              if (e.key === "Enter" && !e.shiftKey && !("ontouchstart" in window)) {
+                e.preventDefault();
+                send();
+              }
+            }}
             placeholder="Ask about any stock…"
-            className="flex-1 bg-[#161b22] border border-white/15 focus:border-blue-400/60 rounded-xl px-4 py-3 text-sm text-white placeholder-white/30 resize-none focus:outline-none transition-colors"
-            style={{ minHeight: "48px", maxHeight: "120px" }}
+            // MOBILE: font-size 16px is critical — prevents iOS from zooming in on the input
+            style={{ minHeight: "44px", maxHeight: "120px", fontSize: "16px" }}
+            className="flex-1 bg-[#161b22] border border-white/15 focus:border-blue-400/60 rounded-xl px-3.5 sm:px-4 py-2.5 sm:py-3 text-white placeholder-white/30 resize-none focus:outline-none transition-colors leading-relaxed"
           />
-          <button onClick={() => send()} disabled={loading || !input.trim()}
-            className="bg-blue-600 hover:bg-blue-500 disabled:opacity-35 disabled:cursor-not-allowed rounded-xl px-5 py-3 text-sm font-semibold transition-colors flex-shrink-0">
-            {loading ? "…" : "↑"}
+          {/* MOBILE: fixed square send button for a reliable tap target */}
+          <button
+            onClick={() => send()}
+            disabled={loading || !input.trim()}
+            className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-35 disabled:cursor-not-allowed rounded-xl w-11 h-11 flex items-center justify-center text-base font-semibold transition-colors flex-shrink-0 touch-manipulation"
+          >
+            {loading
+              ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              : "↑"}
           </button>
         </div>
         <p className="text-white/15 text-xs mt-2 text-center">For informational purposes only. Not financial advice.</p>
