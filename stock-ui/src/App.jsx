@@ -6,7 +6,7 @@ import {
   Cell
 } from "recharts";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://your-railway-url.up.railway.app";
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
 const SIG = {
