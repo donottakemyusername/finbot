@@ -545,21 +545,28 @@ export default function App() {
     setMessages(p => [...p, { role: "user", content: msg }]);
     setLoading(true);
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
       const res  = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: msg, session_id: sessionId }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setMessages(p => [...p, {
         role: "assistant",
         content:     data.response,
-        tool_calls:  data.tool_calls || [],
+        tool_calls:  [...new Set(data.tool_calls || [])],  // deduplicate
         tool_data:   data.tool_data  || {},
       }]);
     } catch (e) {
-      setMessages(p => [...p, { role: "assistant", content: `⚠️ **Error:** ${e.message}` }]);
+      const msg = e.name === "AbortError"
+        ? "⚠️ **Request timed out.** Full analysis can take up to 2 minutes — please try again."
+        : `⚠️ **Error:** ${e.message}`;
+      setMessages(p => [...p, { role: "assistant", content: msg }]);
     } finally {
       setLoading(false);
     }
