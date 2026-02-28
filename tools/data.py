@@ -68,7 +68,21 @@ def get_ticker_info(ticker: str) -> dict[str, Any]:
 
 def get_financial_metrics_from_yfinance(ticker: str) -> list[dict]:
     """Build a financial metrics dict from yfinance .info — used as fallback."""
-    info = get_ticker_info(ticker)
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        # Try fast_info as secondary source if info is sparse
+        try:
+            fi = t.fast_info
+            if not info.get("marketCap") and hasattr(fi, "market_cap"):
+                info["marketCap"] = fi.market_cap
+            if not info.get("regularMarketPrice") and hasattr(fi, "last_price"):
+                info["regularMarketPrice"] = fi.last_price
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[yfinance] get_ticker_info failed for {ticker}: {e}")
+        return []
     if not info:
         return []
     # Map yfinance keys to financialdatasets field names

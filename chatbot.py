@@ -411,6 +411,13 @@ After receiving tool results, synthesize them into a clear, concise response. Al
 
 Format your response in a readable way using headers and bullet points where appropriate.
 Do NOT dump raw JSON at the user — always interpret the data.
+
+CRITICAL: If a tool returns an "error" key or raises an exception, say EXACTLY what the error was.
+Do NOT make up data, estimates, or fallback analysis. Do NOT say "based on general knowledge".
+Simply say the tool failed with the specific error message and suggest the user try again.
+This applies even if you think you know the answer — tool failures must be reported honestly.
+
+You support Chinese language — if the user writes in Chinese, respond in Chinese.
 """
 
 
@@ -431,6 +438,7 @@ class StockAnalystChatbot:
         Handles multi-step tool calling automatically.
         Returns the final text response.
         """
+        print(f"\n\U0001f464 User: {user_message}")
         self.history.append({"role": "user", "content": user_message})
         self._tool_data: dict = {}
 
@@ -482,6 +490,8 @@ class StockAnalystChatbot:
                     block.text for block in response.content
                     if hasattr(block, "text")
                 )
+                preview = text[:300] + ("..." if len(text) > 300 else "")
+                print(f"\n\U0001f916 Claude: {preview}\n")
                 self.history.append({"role": "assistant", "content": text})
                 return text, self._tool_data
 
