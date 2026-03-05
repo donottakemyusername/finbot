@@ -201,11 +201,12 @@ def _dividends(m: dict) -> tuple[str, dict] | None:
     valid = [(v, t, d) for v, t, d in items if v is not None]
     sc = _score(valid)
     sig = _sub_signal(sc, max(len(valid), 1))
+    dy_pct = dy / 100 if dy is not None else None
 
     return sig, {
         "signal": sig,
         "score": f"{sc}/{len(valid)}",
-        "details": " | ".join([_fmt("Dividend Yield", dy/100), _fmt("Payout Ratio", pr)]),
+        "details": " | ".join([_fmt("Dividend Yield", dy_pct), _fmt("Payout Ratio", pr)]),
     }
 
 
@@ -240,7 +241,7 @@ def run_fundamental_analysis(
     if not metrics_list:
         return {"ticker": ticker, "error": "No financial metrics found"}
 
-    m = metrics_list[0]  # most recent TTM snapshot
+    m = metrics_list[0]
 
     sections: dict = {}
 
