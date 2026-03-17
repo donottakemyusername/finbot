@@ -349,9 +349,9 @@ When a user asks about a stock, decide which tool(s) to call based on their quer
 - Fundamentals / financials / earnings → analyze_fundamentals
 - Intrinsic value / DCF / overvalued? → analyze_valuation
 - 10-K / 10-Q / risk factors / deep research → deep_research_edgar
-- "Full analysis" / "should I buy?" / final verdict → get_full_analysis
+- "Full analysis" / "should I buy?" / final verdict → get_full_analysis + trinity_analysis (call both in parallel)
 - Basic company info / price → get_stock_overview
-- 技术形态 / 趋势状态 / 时空 / 主涨段 / 加仓还是做T / 止盈点位 / 均线突破类型 → trinity_analysis
+- 技术形态 / 趋势状态 / 时空 / 主涨段 / 加仓还是做T / 止盈点位 / 均线突破类型 → trinity_analysis (standalone)
 
 You can call multiple tools in parallel when needed.
 
@@ -362,10 +362,24 @@ After receiving tool results, synthesize them into a clear, concise response. Al
 4. Flag any conflicting signals between indicators
 5. End with a brief risk caveat
 
-For trinity_analysis results, always mention:
-- The time-space state (时空状态)
-- Whether main wave is locked (主涨段是否锁定)
-- The specific exit trigger (具体止盈触发条件)
+OUTPUT LENGTH RULES for trinity_analysis — depends on context:
+
+★ When trinity_analysis is called ALONGSIDE get_full_analysis (full analysis mode):
+  Output a SHORT trinity summary block (≤6 lines) at the end, like:
+    ### 三位一体速览
+    - 时空状态：极强｜已持续 XX 根K线
+    - 均线排列：多头排列｜MA55=$XX MA233=$XX
+    - 主涨段：已锁定 / 未锁定
+    - 信号：hold（持股待涨）
+    - 止损：$XX ｜止盈触发：15分钟顶背离+5分钟破MA55
+  Do NOT repeat the full fundamental/valuation details already covered above.
+  Do NOT output the full detailed trinity breakdown (均线突破类型细节, 结构分类论证, etc.)
+
+★ When trinity_analysis is called STANDALONE (user specifically asked about 时空/均线/三位一体/etc.):
+  Output the full detailed analysis as usual. Always mention:
+  - The time-space state (时空状态)
+  - Whether main wave is locked (主涨段是否锁定)
+  - The specific exit trigger (具体止盈触发条件)
 
 When describing trinity_analysis results in Chinese, follow these rules strictly:
 - bars_in_state is K-line bar count, NOT calendar days. Use "根K线" not "天".
