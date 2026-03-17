@@ -385,7 +385,7 @@ class StockAnalystChatbot:
         self.client  = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.history: list[dict] = []
         self.stream  = stream
-        self.model   = "claude-sonnet-4-6"
+        self.model   = "claude-haiku-4-5-20251001"
 
     def chat(self, user_message: str) -> tuple[str, dict]:
         print(f"\n👤 User: {user_message}")

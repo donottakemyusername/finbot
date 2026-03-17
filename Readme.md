@@ -159,7 +159,7 @@ Technical (35%)    Fundamental (35%)    Valuation (30%)
                   Score < -0.15 → SELL
                   Otherwise     → HOLD
                           ↓
-                  Claude AI (claude-sonnet-4-6)
+                  Claude AI (claude-haiku-4-5-20251001)
                   Synthesizes all data → final verdict + reasoning
 ```
 
