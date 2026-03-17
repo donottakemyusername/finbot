@@ -41,6 +41,7 @@ def trinity_analysis(
     # ── Step 1: 数据 ──────────────────────────────────────────────────────────
     dfs        = fetch_multi_timeframe(ticker)
     df_daily   = dfs.get("daily",   pd.DataFrame())
+    df_weekly  = dfs.get("weekly",  pd.DataFrame())
     df_monthly = dfs.get("monthly", pd.DataFrame())
     df_hourly  = dfs.get("hourly",  pd.DataFrame())
 
@@ -58,16 +59,26 @@ def trinity_analysis(
                     if not df_monthly.empty and len(df_monthly) >= 30
                     else {})
 
+    weekly_macd = (compute_macd_signals(df_weekly)
+                   if not df_weekly.empty and len(df_weekly) >= 30
+                   else {})
+
     # ── Step 3: 时空状态机 ────────────────────────────────────────────────────
     time_space = compute_time_space_state(
         df_daily=df_daily,
         df_monthly=df_monthly,
+        df_weekly=df_weekly,
         bb_hourly=bb_hourly,
         holding_days_min=holding_days_min,
     )
 
     # ── Step 4: Claude 软判断 ─────────────────────────────────────────────────
-    claude_input = {**hard_signals, "bb_hourly_j1": bb_hourly, "monthly_macd_j2": monthly_macd}
+    claude_input = {
+        **hard_signals,
+        "bb_hourly_j_minus1":  bb_hourly,
+        "weekly_macd_j1":      weekly_macd,
+        "monthly_macd_j2":     monthly_macd,
+    }
     pattern_analysis = call_claude_for_soft_signals(
         ticker=ticker,
         hard_signals=claude_input,
@@ -96,22 +107,29 @@ def trinity_analysis(
         "is_extreme":           state.get("is_extreme", False),
         "is_bullish":           state.get("is_bullish", False),
         "bars_in_state":        state.get("bars_in_state", 0),
+        "weekly_state_label":   time_space.get("weekly_state", {}).get("state_label", "未知"),
+        "weekly_is_bullish":    time_space.get("weekly_state", {}).get("is_bullish", False),
+        "j1_weekly_confirmed":  main_wave.get("j1_weekly_confirmed", False),
         "first_assumption":     time_space.get("first_assumption", ""),
         "main_wave_locked":     is_locked,
         "main_wave_note":       main_wave.get("note", ""),
         "pattern_type":         structure.get("pattern_type", "unknown"),
         "current_stage":        structure.get("current_stage", "unknown"),
         "likely_next":          structure.get("likely_next_move", "unknown"),
-        "key_support":          structure.get("key_support"),
-        "key_resistance":       structure.get("key_resistance"),
+        "key_support":          structure.get("key_support") or hard_signals.get("key_support"),
+        "key_resistance":       structure.get("key_resistance") or hard_signals.get("key_resistance"),
+        "long_stop_loss":       hard_signals.get("long_stop_loss"),    # Python预算：key_support×0.97
+        "short_stop_loss":      hard_signals.get("short_stop_loss"),   # Python预算：key_resistance×1.03
         "trend_alignment":      hard_signals.get("trend_alignment", "mixed"),
         "ma55":                 hard_signals.get("ma55"),
         "ma233":                hard_signals.get("ma233"),
         "current_price":        hard_signals.get("current_price"),
         "ma_breakout_type":     ma_ana.get("ma55_breakout_type", "none"),
+        "ma_breakout_direction": ma_ana.get("ma55_breakout_direction", ""),
         "pullback_opportunity": ma_ana.get("pullback_opportunity", False),
         "divergence_type":      div.get("divergence_type", "none"),
         "divergence_strength":  div.get("divergence_strength", "none"),
+        "divergence_note":      div.get("divergence_note", ""),
         "signal":               composite.get("signal", "hold"),
         "confidence":           composite.get("confidence", "low"),
         "entry_side":           composite.get("entry_side", "wait"),
@@ -122,8 +140,13 @@ def trinity_analysis(
         "position_size":        composite.get("position_size", "light"),
         "exit_mode":            exit_g.get("mode", "normal"),
         "exit_trigger":         exit_g.get("exit_trigger", ""),
-        "reduce_1st":           exit_g.get("reduce_1st", ""),
-        "reduce_2nd":           exit_g.get("reduce_2nd", ""),
+        "reduce_1st_long":      exit_g.get("reduce_1st_long", exit_g.get("reduce_1st", "")),
+        "reduce_2nd_long":      exit_g.get("reduce_2nd_long", exit_g.get("reduce_2nd", "")),
+        "reduce_1st_short":     exit_g.get("reduce_1st_short", ""),
+        "reduce_2nd_short":     exit_g.get("reduce_2nd_short", ""),
+        # keep legacy fields for frontend compatibility
+        "reduce_1st":           exit_g.get("reduce_1st_long", exit_g.get("reduce_1st", "")),
+        "reduce_2nd":           exit_g.get("reduce_2nd_long", exit_g.get("reduce_2nd", "")),
         "holding_constraint":   exit_g.get("holding_constraint_note", ""),
     }
 

@@ -9,6 +9,10 @@ Layer 2: 时空状态机，100% Python实现，无需Claude API。
   中性偏弱 → 高位死叉 → DIF第一次下穿零轴
   极弱     → DIF下穿零轴 → DEA下穿零轴
   弱       → DEA下穿零轴 → 下一次底部金叉
+
+更新：
+- compute_time_space_state return 新增 extreme_bars_warning（极端状态<3根K线时=True）
+  prompt.py 读取此字段，强制将confidence降为low
 """
 from __future__ import annotations
 import pandas as pd
@@ -57,29 +61,55 @@ def detect_state_events(df: pd.DataFrame) -> list[dict]:
 
 
 def compute_current_state(events: list[dict], total_bars: int) -> dict:
-    """根据事件序列推算当前所处的六种状态之一。"""
+    """根据事件序列推算当前所处的六种状态之一。
+
+    特殊情况处理：
+    对于长期牛股（如CIEN、AVGO），DIF可能全程在零轴上方，永远不会出现 bottom_cross。
+    此时用 dea_cross_zero_up 或最早的 high_golden_cross 作为起点，
+    起点状态定为"强"（因为DEA已过零轴，已经过了极强阶段）。
+    """
     if not events:
         return _unknown()
-    last_bottom = next((e for e in reversed(events) if e["event"] == "bottom_cross"), None)
-    if last_bottom is None:
-        return _unknown()
 
-    current_state = "mid_strong"
+    # ── 优先找 bottom_cross（标准起点）─────────────────────────────────────
+    last_bottom = next((e for e in reversed(events) if e["event"] == "bottom_cross"), None)
+
+    # ── fallback：找不到 bottom_cross，说明DIF全程在零轴上方（长期牛股）──
+    if last_bottom is None:
+        first_dea_up = next((e for e in events if e["event"] == "dea_cross_zero_up"), None)
+        if first_dea_up is not None:
+            last_bottom = first_dea_up
+            start_state = "strong"
+        else:
+            first_hgc = next((e for e in events if e["event"] == "high_golden_cross"), None)
+            if first_hgc is not None:
+                last_bottom = first_hgc
+                start_state = "strong"
+            else:
+                return _unknown()
+    else:
+        start_state = "mid_strong"
+
+    current_state = start_state
     last_event_bar = last_bottom["bar"]
-    last_event_name = "bottom_cross"
+    last_event_name = last_bottom["event"]
 
     transition_map = {
         "mid_strong":     ["dif_cross_zero_up"],
-        "extreme_strong": ["dea_cross_zero_up"],
+        "extreme_strong": ["dea_cross_zero_up", "dif_cross_zero_dn", "high_golden_cross"],
         "strong":         ["top_death_cross"],
-        "mid_weak":       ["dif_cross_zero_dn"],
-        "extreme_weak":   ["dea_cross_zero_dn"],
-        "weak":           ["bottom_cross"],
+        "mid_weak":       ["dif_cross_zero_dn", "high_golden_cross"],
+        "extreme_weak":   ["dea_cross_zero_dn", "dif_cross_zero_up", "dea_cross_zero_up", "high_golden_cross"],
+        "weak":           ["bottom_cross", "dif_cross_zero_up", "dea_cross_zero_up", "high_golden_cross"],
     }
     next_state_map = {
-        "dif_cross_zero_up": "extreme_strong", "dea_cross_zero_up": "strong",
-        "top_death_cross": "mid_weak", "dif_cross_zero_dn": "extreme_weak",
-        "dea_cross_zero_dn": "weak", "bottom_cross": "mid_strong",
+        "dif_cross_zero_up":  "extreme_strong",
+        "dea_cross_zero_up":  "strong",
+        "top_death_cross":    "mid_weak",
+        "dif_cross_zero_dn":  "extreme_weak",
+        "dea_cross_zero_dn":  "weak",
+        "bottom_cross":       "mid_strong",
+        "high_golden_cross":  "strong",
     }
     for ev in events:
         if ev["bar"] <= last_bottom["bar"]:
@@ -126,18 +156,28 @@ def detect_boundary_window(events: list[dict], total_bars: int, window: int = 3)
     return {"in_boundary": False, "boundary_type": None, "trigger_event": None, "bars_since_event": None}
 
 
-def compute_main_wave_lock(state_daily: dict, state_monthly: dict, bb_hourly: dict) -> dict:
+def compute_main_wave_lock(
+    state_daily: dict,
+    state_weekly: dict,
+    state_monthly: dict,
+    bb_hourly: dict,
+) -> dict:
     """
     判断主涨段锁定状态（7 Key Points核心规则）。
     月线极强(J+2) + 60分钟布林带未跌破(J-1) = 锁定中
     """
-    monthly_extreme = state_monthly.get("current_state") == "extreme_strong"
-    daily_bullish   = state_daily.get("is_bullish", False)
+    monthly_extreme  = state_monthly.get("current_state") == "extreme_strong"
+    weekly_bullish   = state_weekly.get("is_bullish", False)
+    weekly_state_lbl = state_weekly.get("state_label", "未知")
+    daily_bullish    = state_daily.get("is_bullish", False)
     bb_ok   = not bb_hourly.get("error")
     locked  = bb_ok and not bb_hourly.get("below_mid_2bars", False)
 
     if locked and monthly_extreme:
-        note = "主涨段锁定中：忽略所有背离和结构信号，只看J-1布林带"
+        if weekly_bullish:
+            note = "主涨段锁定中：月线极强+周线多头双确认，忽略所有背离和结构信号，只看J-1布林带"
+        else:
+            note = f"主涨段锁定中（周线{weekly_state_lbl}，中间层偏弱，注意持仓强度）：只看J-1布林带"
     elif not locked:
         note = "锁定解除：回归三要素判断（均线+结构+背离）"
     else:
@@ -145,8 +185,11 @@ def compute_main_wave_lock(state_daily: dict, state_monthly: dict, bb_hourly: di
 
     return {
         "monthly_extreme_strong":   monthly_extreme,
+        "weekly_bullish":           weekly_bullish,
+        "weekly_state_label":       weekly_state_lbl,
         "daily_bullish":            daily_bullish,
         "time_space_condition_met": monthly_extreme and daily_bullish,
+        "j1_weekly_confirmed":      monthly_extreme and weekly_bullish,
         "bollinger_locked":         locked,
         "bollinger_lock_broken":    not locked,
         "j1_below_mid_2bars":       bb_hourly.get("below_mid_2bars", False),
@@ -155,13 +198,10 @@ def compute_main_wave_lock(state_daily: dict, state_monthly: dict, bb_hourly: di
 
 
 def compute_exit_guidance(state: dict, main_wave: dict, holding_days_min: int = 1) -> dict:
-    """
-    止盈观察级别建议。
-    holding_days_min: 最少持有天数限制（0=无限制，1=至少持有1天，30=30天锁定期）
-    """
-    is_locked     = main_wave.get("bollinger_locked") and main_wave.get("monthly_extreme_strong")
-    is_extreme    = state.get("is_extreme", False)
-    holding_note  = ""
+    """止盈观察级别建议。"""
+    is_locked    = main_wave.get("bollinger_locked") and main_wave.get("monthly_extreme_strong")
+    is_extreme   = state.get("is_extreme", False)
+    holding_note = ""
     if holding_days_min == 30:
         holding_note = "⚠️ 注意：持仓有30天限制，减仓信号出现后需等满持有期再操作"
     elif holding_days_min == 1:
@@ -169,30 +209,44 @@ def compute_exit_guidance(state: dict, main_wave: dict, holding_days_min: int = 
 
     if is_locked:
         return {
-            "mode": "main_wave_locked",
-            "description": "主涨段锁定中",
-            "exit_trigger": "60分钟连续2根K线跌破布林带中轨",
-            "reduce_1st": None, "reduce_2nd": None,
-            "ignore_signals": ["顶背离", "结构前高", "小级别MACD"],
+            "mode":                 "main_wave_locked",
+            "description":          "主涨段锁定中",
+            "exit_trigger":         "60分钟连续2根K线跌破布林带中轨",
+            "reduce_1st_long":      None,
+            "reduce_2nd_long":      None,
+            "reduce_1st_short":     None,
+            "reduce_2nd_short":     None,
+            "reduce_1st":           None,
+            "reduce_2nd":           None,
+            "ignore_signals":       ["顶背离", "结构前高", "小级别MACD"],
             "holding_constraint_note": holding_note,
         }
     elif is_extreme:
         return {
-            "mode": "extreme_state",
-            "description": f"极端状态（{state.get('state_label')}），结构信号无效",
-            "exit_trigger": "均线跌破信号（MA55或MA233）",
-            "reduce_1st": None, "reduce_2nd": None,
-            "ignore_signals": ["顶背离", "结构"],
+            "mode":                 "extreme_state",
+            "description":          f"极端状态（{state.get('state_label')}），结构信号无效",
+            "exit_trigger":         "均线跌破信号（MA55或MA233）",
+            "reduce_1st_long":      None,
+            "reduce_2nd_long":      None,
+            "reduce_1st_short":     None,
+            "reduce_2nd_short":     None,
+            "reduce_1st":           None,
+            "reduce_2nd":           None,
+            "ignore_signals":       ["顶背离", "结构"],
             "holding_constraint_note": holding_note,
         }
     else:
         return {
-            "mode": "normal",
-            "description": "正常状态，三要素均有效",
-            "exit_trigger": "背离+破位双确认",
-            "reduce_1st": "15分钟顶背离 + 5分钟破MA55 → 减仓20-30%",
-            "reduce_2nd": "60分钟顶背离 + 15分钟破MA55 → 再减仓50%",
-            "ignore_signals": [],
+            "mode":                 "normal",
+            "description":          "正常状态，三要素均有效",
+            "exit_trigger":         "背离+破位双确认",
+            "reduce_1st_long":      "15分钟顶背离 + 5分钟破MA55（向下）→ 减仓20-30%",
+            "reduce_2nd_long":      "60分钟顶背离 + 15分钟破MA55（向下）→ 再减仓50%",
+            "reduce_1st_short":     "15分钟底背离 + 5分钟站上MA55（向上）→ 平空20-30%",
+            "reduce_2nd_short":     "60分钟底背离 + 15分钟站上MA55（向上）→ 再平空50%",
+            "reduce_1st":           "15分钟顶背离 + 5分钟破MA55（向下）→ 减仓20-30%",
+            "reduce_2nd":           "60分钟顶背离 + 15分钟破MA55（向下）→ 再减仓50%",
+            "ignore_signals":       [],
             "holding_constraint_note": holding_note,
         }
 
@@ -201,16 +255,25 @@ def compute_time_space_state(
     df_daily: pd.DataFrame,
     df_monthly: pd.DataFrame,
     bb_hourly: dict,
+    df_weekly: pd.DataFrame | None = None,
     holding_days_min: int = 1,
 ) -> dict:
     """完整时空状态计算主入口。"""
     events_daily   = detect_state_events(df_daily)
     state_daily    = compute_current_state(events_daily, len(df_daily))
     boundary_daily = detect_boundary_window(events_daily, len(df_daily))
+
     events_monthly = detect_state_events(df_monthly)
     state_monthly  = compute_current_state(events_monthly, len(df_monthly))
-    main_wave      = compute_main_wave_lock(state_daily, state_monthly, bb_hourly)
-    exit_guidance  = compute_exit_guidance(state_daily, main_wave, holding_days_min)
+
+    if df_weekly is not None and not df_weekly.empty and len(df_weekly) >= 30:
+        events_weekly = detect_state_events(df_weekly)
+        state_weekly  = compute_current_state(events_weekly, len(df_weekly))
+    else:
+        state_weekly = _unknown()
+
+    main_wave     = compute_main_wave_lock(state_daily, state_weekly, state_monthly, bb_hourly)
+    exit_guidance = compute_exit_guidance(state_daily, main_wave, holding_days_min)
 
     cs = state_daily["current_state"]
     first_assumption = {
@@ -222,11 +285,19 @@ def compute_time_space_state(
         "extreme_weak":   "A类下跌，极端状态忽略背离持空",
     }.get(cs, "未知")
 
+    # ── extreme_bars_warning：极端状态刚触发（<3根K线），信号极不可靠 ──────
+    # prompt.py 读取此字段，强制将 confidence 降为 low，避免追单
+    is_extreme    = state_daily.get("is_extreme", False)
+    bars_in_state = state_daily.get("bars_in_state", 0)
+    extreme_bars_warning = bool(is_extreme and bars_in_state < 3)
+
     return {
-        "daily_state":      state_daily,
-        "monthly_state":    state_monthly,
-        "boundary_window":  boundary_daily,
-        "main_wave":        main_wave,
-        "exit_guidance":    exit_guidance,
-        "first_assumption": first_assumption,
+        "daily_state":           state_daily,
+        "weekly_state":          state_weekly,
+        "monthly_state":         state_monthly,
+        "boundary_window":       boundary_daily,
+        "main_wave":             main_wave,
+        "exit_guidance":         exit_guidance,
+        "first_assumption":      first_assumption,
+        "extreme_bars_warning":  extreme_bars_warning,  # ← 新增：True时prompt强制confidence=low
     }

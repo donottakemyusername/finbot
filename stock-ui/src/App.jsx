@@ -92,8 +92,10 @@ function TrinityPriceChart({ chartData, summary }) {
   const priceMax = Math.max(...data.map(d => d.high).filter(Boolean)) * 1.005;
 
   const breakoutType = summary?.ma_breakout_type;
+  const breakoutDir  = summary?.ma_breakout_direction;  // "up" | "down" | ""
   const breakoutColors = { A: "#f59e0b", B: "#10b981", C: "#3b82f6", D: "#a78bfa" };
   const breakoutColor  = breakoutColors[breakoutType] || "#fff";
+  const dirLabel = breakoutDir === "up" ? "向上" : breakoutDir === "down" ? "向下" : "";
 
   return (
     <Section title={`价格 · MA55 · MA233 · 布林带 — 近60日`}>
@@ -104,7 +106,8 @@ function TrinityPriceChart({ chartData, summary }) {
             均线突破类型：{breakoutType}类
           </span>
           <span className="text-white/30">
-            {{ A: "慢速穿越", B: "有效突破", C: "突破后回抽", D: "反向测试" }[breakoutType]}
+            {{ A: "典型突破", B: "慢速/盘整突破", C: "突破后回抽", D: "反向测试" }[breakoutType]}
+            {dirLabel && `（${dirLabel}）`}
           </span>
         </div>
       )}
@@ -114,10 +117,10 @@ function TrinityPriceChart({ chartData, summary }) {
         <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-400 inline-block" />MA233</span>
         <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-purple-400/60 inline-block" />布林带</span>
         {summary?.key_support && (
-          <span className="text-emerald-400">支撑: ${summary.key_support}</span>
+          <span className="text-emerald-400">支撑: ${(+summary.key_support).toFixed(2)}</span>
         )}
         {summary?.key_resistance && (
-          <span className="text-red-400">压力: ${summary.key_resistance}</span>
+          <span className="text-red-400">压力: ${(+summary.key_resistance).toFixed(2)}</span>
         )}
       </div>
 
@@ -146,8 +149,8 @@ function TrinityPriceChart({ chartData, summary }) {
           <Line dataKey="ma233" stroke="#60a5fa" strokeWidth={2} dot={false} name="MA233" />
 
           {/* 支撑/压力线 */}
-          {summary?.key_support    && <ReferenceLine y={summary.key_support}    stroke="#10b981" strokeDasharray="4 4" label={{ value: `支撑 $${summary.key_support}`, fill: "#10b981", fontSize: 9 }} />}
-          {summary?.key_resistance && <ReferenceLine y={summary.key_resistance} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `压力 $${summary.key_resistance}`, fill: "#ef4444", fontSize: 9 }} />}
+          {summary?.key_support    && <ReferenceLine y={summary.key_support}    stroke="#10b981" strokeDasharray="4 4" label={{ value: `支撑 $${(+summary.key_support).toFixed(2)}`,    fill: "#10b981", fontSize: 9 }} />}
+          {summary?.key_resistance && <ReferenceLine y={summary.key_resistance} stroke="#ef4444" strokeDasharray="4 4" label={{ value: `压力 $${(+summary.key_resistance).toFixed(2)}`, fill: "#ef4444", fontSize: 9 }} />}
         </ComposedChart>
       </ResponsiveContainer>
     </Section>
@@ -316,9 +319,11 @@ function TrinityCard({ data }) {
                 <span className="text-white/40 font-normal ml-1 text-xs">({s.divergence_strength})</span>
               </p>
               <p className="text-white/50 text-xs">
-                {s.divergence_type?.includes("top")
-                  ? "价格创新高但MACD动能衰竭，注意拐点风险"
-                  : "价格创新低但MACD动能收缩，可能出现反弹"}
+                {s.divergence_note
+                  ? s.divergence_note
+                  : s.divergence_type?.includes("top")
+                    ? "MACD动能衰竭，注意拐点风险"
+                    : "MACD动能收缩，可能出现反弹"}
               </p>
             </div>
           </div>
@@ -335,21 +340,46 @@ function TrinityCard({ data }) {
           </div>
         ) : (
           <div className="space-y-2">
-            {s.reduce_1st && (
-              <div className="flex gap-2 text-xs">
-                <span className="text-amber-400 font-bold flex-shrink-0">第一次减仓</span>
-                <span className="text-white/60">{s.reduce_1st}</span>
-              </div>
-            )}
-            {s.reduce_2nd && (
-              <div className="flex gap-2 text-xs">
-                <span className="text-red-400 font-bold flex-shrink-0">第二次减仓</span>
-                <span className="text-white/60">{s.reduce_2nd}</span>
-              </div>
-            )}
-            {!s.reduce_1st && s.exit_trigger && (
-              <p className="text-white/60 text-xs">止盈触发：{s.exit_trigger}</p>
-            )}
+            {(() => {
+              // signal="sell" → 只显示空头平仓; signal="buy" → 只显示多头减仓; "hold" → 两套都显示
+              const isShort = s.signal === "sell";
+              const isLong  = s.signal === "buy";
+              const showLong  = isLong  || (!isShort);
+              const showShort = isShort || (!isLong);
+              const r1l = s.reduce_1st_long  || s.reduce_1st;
+              const r2l = s.reduce_2nd_long  || s.reduce_2nd;
+              const r1s = s.reduce_1st_short;
+              const r2s = s.reduce_2nd_short;
+              return (<>
+                {showLong && r1l && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-amber-400 font-bold flex-shrink-0">多头减仓①</span>
+                    <span className="text-white/60">{r1l}</span>
+                  </div>
+                )}
+                {showLong && r2l && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-red-400 font-bold flex-shrink-0">多头减仓②</span>
+                    <span className="text-white/60">{r2l}</span>
+                  </div>
+                )}
+                {showShort && r1s && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-sky-400 font-bold flex-shrink-0">空头平仓①</span>
+                    <span className="text-white/60">{r1s}</span>
+                  </div>
+                )}
+                {showShort && r2s && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-blue-400 font-bold flex-shrink-0">空头平仓②</span>
+                    <span className="text-white/60">{r2s}</span>
+                  </div>
+                )}
+                {!r1l && !r1s && s.exit_trigger && (
+                  <p className="text-white/60 text-xs">止盈触发：{s.exit_trigger}</p>
+                )}
+              </>);
+            })()}
           </div>
         )}
         {s.holding_constraint && (
