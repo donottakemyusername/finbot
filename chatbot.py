@@ -1,6 +1,7 @@
 """chatbot.py
 =============
 Option B: Custom chatbot with explicit Anthropic tool-calling loop.
+三位一体 (Trinity Trading System) 已集成为独立工具。
 
 Flow
 ----
@@ -15,21 +16,18 @@ User message
 Run
 ---
     python chatbot.py                  # interactive CLI
-    python chatbot.py --stream         # with streaming output
+    uvicorn chatbot:create_api --factory --reload --port 8000  # FastAPI
 """
-
 from __future__ import annotations
 
 import argparse
 import json
 import os
 import sys
-from typing import Any, Generator
 
 import anthropic
 from dotenv import load_dotenv
 
-# ── Local tool implementations ───────────────────────────────────────────────
 from tools.data import get_ticker_info, get_price_history
 from tools.technicals import run_technical_analysis, INDICATORS
 from tools.fundamentals import run_fundamental_analysis
@@ -39,8 +37,9 @@ from engine.aggregator import run_full_analysis
 
 load_dotenv()
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 1.  TOOL SCHEMAS  (explicit JSON Schema — Claude uses these to decide what to call)
+# 1.  TOOL SCHEMAS
 # ─────────────────────────────────────────────────────────────────────────────
 
 TOOL_SCHEMAS: list[dict] = [
@@ -54,10 +53,7 @@ TOOL_SCHEMAS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol, e.g. 'AAPL', 'TSLA', 'MSFT'",
-                },
+                "ticker": {"type": "string", "description": "Stock ticker symbol, e.g. 'AAPL'"},
             },
             "required": ["ticker"],
         },
@@ -65,28 +61,16 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "analyze_technicals",
         "description": (
-            "Run ALL technical indicators for a stock: Bollinger Bands, SMA 50/200 "
-            "(Golden/Death Cross), EMA 12/26, RSI 14, and MACD 12/26/9. "
-            "Each indicator returns its current buy/hold/sell signal, plain-English reason, "
-            "and a 5-year backtest result (win rate, total return, Sharpe ratio, n_trades). "
-            "Use this when the user asks for a full technical analysis or 'all indicators'."
+            "Run ALL technical indicators for a stock: Bollinger Bands, SMA 50/200, "
+            "EMA 12/26, RSI 14, and MACD 12/26/9. Each indicator returns signal + 5-year backtest. "
+            "Use when the user asks for full technical analysis or 'all indicators'."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol",
-                },
-                "years": {
-                    "type": "integer",
-                    "description": "Years of price history for backtest (default 5)",
-                    "default": 5,
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "Optional end date YYYY-MM-DD (defaults to today)",
-                },
+                "ticker": {"type": "string"},
+                "years":  {"type": "integer", "default": 5},
+                "end_date": {"type": "string"},
             },
             "required": ["ticker"],
         },
@@ -94,28 +78,16 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "analyze_single_indicator",
         "description": (
-            "Run a SINGLE technical indicator for a stock with a 5-year backtest. "
-            "Use this when the user asks about a specific indicator by name, e.g. "
-            "'What does Bollinger Bands say about AAPL?' or 'Show me the RSI for TSLA'. "
-            "Available indicators: bollinger, sma, ema, rsi, macd."
+            "Run a SINGLE technical indicator for a stock with backtest. "
+            "Use when user asks about a specific indicator, e.g. 'What does Bollinger say about AAPL?'. "
+            "Available: bollinger, sma, ema, rsi, macd."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol",
-                },
-                "indicator": {
-                    "type": "string",
-                    "enum": ["bollinger", "sma", "ema", "rsi", "macd"],
-                    "description": "Which indicator to run",
-                },
-                "years": {
-                    "type": "integer",
-                    "description": "Years of backtest history (default 5)",
-                    "default": 5,
-                },
+                "ticker":    {"type": "string"},
+                "indicator": {"type": "string", "enum": ["bollinger", "sma", "ema", "rsi", "macd"]},
+                "years":     {"type": "integer", "default": 5},
             },
             "required": ["ticker", "indicator"],
         },
@@ -123,30 +95,18 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "analyze_multiple_indicators",
         "description": (
-            "Run a SPECIFIC SET of technical indicators for a stock. "
-            "Use this when the user asks about 2-4 specific indicators, e.g. "
-            "'Compare Bollinger and RSI for AAPL' or 'Show me MACD and SMA for NVDA'."
+            "Run a SPECIFIC SET of technical indicators. "
+            "Use when user asks about 2-4 specific indicators, e.g. 'Compare Bollinger and RSI'."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol",
-                },
+                "ticker": {"type": "string"},
                 "indicators": {
                     "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": ["bollinger", "sma", "ema", "rsi", "macd"],
-                    },
-                    "description": "List of indicators to run",
+                    "items": {"type": "string", "enum": ["bollinger", "sma", "ema", "rsi", "macd"]},
                 },
-                "years": {
-                    "type": "integer",
-                    "description": "Years of backtest history (default 5)",
-                    "default": 5,
-                },
+                "years": {"type": "integer", "default": 5},
             },
             "required": ["ticker", "indicators"],
         },
@@ -154,25 +114,15 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "analyze_fundamentals",
         "description": (
-            "Analyze company fundamentals across 5 areas: "
-            "profitability (ROE, net margin, operating margin, ROA), "
-            "growth (revenue, earnings, book value growth), "
-            "financial health (current ratio, debt/equity, FCF conversion), "
-            "valuation ratios (P/E, P/B, P/S), and dividends if applicable. "
-            "Returns bullish/neutral/bearish signal per section with scores and metric values. "
-            "Use when user asks about fundamentals, financials, earnings quality, or business health."
+            "Analyze company fundamentals: profitability, growth, financial health, "
+            "valuation ratios, and dividends. "
+            "Use when user asks about fundamentals, financials, or business health."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "Optional cutoff date YYYY-MM-DD",
-                },
+                "ticker":   {"type": "string"},
+                "end_date": {"type": "string"},
             },
             "required": ["ticker"],
         },
@@ -180,25 +130,14 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "analyze_valuation",
         "description": (
-            "Run four intrinsic value models and compare to current market cap: "
-            "1) DCF (Discounted Cash Flow, 35% weight), "
-            "2) Owner Earnings / Buffett model (35% weight), "
-            "3) EV/EBITDA implied equity value (20% weight), "
-            "4) Residual Income Model (10% weight). "
-            "Returns overall signal, weighted % gap to intrinsic value, and per-model breakdown. "
-            "Use when user asks about intrinsic value, whether a stock is over/undervalued, or DCF."
+            "Run four intrinsic value models: DCF, Owner Earnings, EV/EBITDA, Residual Income. "
+            "Use when user asks about intrinsic value, over/undervalued, or DCF."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "Optional cutoff date YYYY-MM-DD",
-                },
+                "ticker":   {"type": "string"},
+                "end_date": {"type": "string"},
             },
             "required": ["ticker"],
         },
@@ -206,32 +145,19 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "deep_research_edgar",
         "description": (
-            "Pull the latest 10-K (annual) or 10-Q (quarterly) SEC filing for a company "
-            "and extract key sections: business description, risk factors, "
-            "management discussion & analysis (MD&A), and financial statements. "
-            "Use when the user asks for deep research, wants to know about risks, "
-            "strategy, or management commentary from official filings."
+            "Pull the latest 10-K or 10-Q SEC filing and extract key sections: "
+            "business, risk factors, MD&A, financial statements. "
+            "Use when user asks for deep research, risks, or management commentary."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "ticker": {
-                    "type": "string",
-                    "description": "Stock ticker symbol",
-                },
-                "form_type": {
-                    "type": "string",
-                    "enum": ["10-K", "10-Q"],
-                    "description": "10-K for annual report, 10-Q for quarterly (default 10-K)",
-                    "default": "10-K",
-                },
+                "ticker":    {"type": "string"},
+                "form_type": {"type": "string", "enum": ["10-K", "10-Q"], "default": "10-K"},
                 "sections": {
                     "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": ["business", "risk_factors", "mda", "financial_statements"],
-                    },
-                    "description": "Which sections to extract (default: all four)",
+                    "items": {"type": "string",
+                              "enum": ["business", "risk_factors", "mda", "financial_statements"]},
                 },
             },
             "required": ["ticker"],
@@ -240,29 +166,51 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_full_analysis",
         "description": (
-            "Run the COMPLETE analysis pipeline and return a final AI-generated "
-            "buy/hold/sell verdict with reasoning. This runs: all technical indicators "
-            "with backtests, full fundamental analysis, all valuation models, and "
-            "optionally EDGAR deep research. Returns final verdict, confidence score, "
-            "reasoning paragraph, supporting arguments, key risks, and a full indicator dashboard. "
-            "Use when user asks for a full analysis, final recommendation, or 'should I buy X'."
+            "Run the COMPLETE analysis pipeline: all technical indicators, fundamentals, "
+            "valuation models, and optionally EDGAR deep research. "
+            "Returns final AI-generated buy/hold/sell verdict with reasoning. "
+            "Use when user asks for a full analysis or 'should I buy X'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker":                {"type": "string"},
+                "include_deep_research": {"type": "boolean", "default": False},
+                "years":                 {"type": "integer", "default": 5},
+            },
+            "required": ["ticker"],
+        },
+    },
+    # ── 三位一体工具 ──────────────────────────────────────────────────────────
+    {
+        "name": "trinity_analysis",
+        "description": (
+            "三位一体技术分析（Trinity Trading System）：基于均线、结构、时空三个维度深度分析股票。\n"
+            "功能：\n"
+            "  • 时空状态识别（极强/强/中性偏强/中性偏弱/极弱/弱）\n"
+            "  • 结构分类（A五段式/B双平台/C单平台/D三段式）\n"
+            "  • 主涨段确认与锁定状态判断\n"
+            "  • 均线突破类型（A慢速/B有效/C回抽/D反向测试）\n"
+            "  • 顶底背离检测\n"
+            "  • 分层止盈建议\n"
+            "使用场景：当用户问到技术形态、趋势状态、主涨段、"
+            "应该加仓还是做T、止盈点位、均线突破类型时使用。"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "ticker": {
                     "type": "string",
-                    "description": "Stock ticker symbol",
+                    "description": "股票代码，如 'AAPL', 'TSLA'",
                 },
-                "include_deep_research": {
-                    "type": "boolean",
-                    "description": "If true, also fetches EDGAR 10-K (slower but more thorough)",
-                    "default": False,
-                },
-                "years": {
+                "holding_days_min": {
                     "type": "integer",
-                    "description": "Years of price history for technical backtest (default 5)",
-                    "default": 5,
+                    "description": (
+                        "交易限制：最少持有天数。"
+                        "0=无限制，1=至少持有1天（默认），30=30天锁定期。"
+                        "设置后会在止盈建议中加入相应提示。"
+                    ),
+                    "default": 1,
                 },
             },
             "required": ["ticker"],
@@ -272,25 +220,24 @@ TOOL_SCHEMAS: list[dict] = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2.  TOOL DISPATCHER  (maps tool name → actual Python function call)
+# 2.  TOOL DISPATCHER
 # ─────────────────────────────────────────────────────────────────────────────
 
 def dispatch_tool(tool_name: str, tool_input: dict) -> str:
     """Execute a tool by name and return its JSON string result."""
-
     try:
         if tool_name == "get_stock_overview":
             ticker = tool_input["ticker"]
             info = get_ticker_info(ticker)
             try:
-                df = get_price_history(ticker, years=1)
+                df    = get_price_history(ticker, years=1)
                 price    = round(float(df["Close"].iloc[-1]), 2)
                 high_52w = round(float(df["High"].max()), 2)
                 low_52w  = round(float(df["Low"].min()), 2)
                 chg_1y   = round((df["Close"].iloc[-1] / df["Close"].iloc[0] - 1) * 100, 2)
             except Exception:
                 price = high_52w = low_52w = chg_1y = None
-            result = {
+            return json.dumps({
                 "ticker":            ticker.upper(),
                 "name":              info.get("longName", info.get("shortName", "N/A")),
                 "sector":            info.get("sector", "N/A"),
@@ -301,8 +248,7 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
                 "52w_high":          high_52w,
                 "52w_low":           low_52w,
                 "market_cap":        info.get("marketCap"),
-            }
-            return json.dumps(result, indent=2)
+            }, indent=2)
 
         elif tool_name == "analyze_technicals":
             result = run_technical_analysis(
@@ -320,10 +266,8 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
             )
             ind = result["indicators"].get(tool_input["indicator"], {})
             return json.dumps({
-                "ticker":    tool_input["ticker"],
-                "price":     result["price"],
-                "as_of":     result["as_of"],
-                "indicator": ind,
+                "ticker": tool_input["ticker"], "price": result["price"],
+                "as_of": result["as_of"], "indicator": ind,
             }, indent=2)
 
         elif tool_name == "analyze_multiple_indicators":
@@ -357,15 +301,13 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
             return json.dumps(result, indent=2)
 
         elif tool_name == "get_full_analysis":
-            ticker  = tool_input["ticker"]
-            years   = tool_input.get("years", 5)
-            deep    = tool_input.get("include_deep_research", False)
-
-            tech  = run_technical_analysis(ticker, years=years)
-            fund  = run_fundamental_analysis(ticker)
-            valu  = run_valuation_analysis(ticker)
-            edgar = run_deep_research(ticker, form_type="10-K", sections=["mda"]) if deep else None
-
+            ticker = tool_input["ticker"]
+            years  = tool_input.get("years", 5)
+            deep   = tool_input.get("include_deep_research", False)
+            tech   = run_technical_analysis(ticker, years=years)
+            fund   = run_fundamental_analysis(ticker)
+            valu   = run_valuation_analysis(ticker)
+            edgar  = run_deep_research(ticker, form_type="10-K", sections=["mda"]) if deep else None
             result = run_full_analysis(
                 ticker=ticker,
                 technical_result=tech,
@@ -375,6 +317,16 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
                 use_ai=True,
             )
             return json.dumps(result, indent=2)
+
+        # ── 三位一体 ──────────────────────────────────────────────────────────
+        elif tool_name == "trinity_analysis":
+            from tools.trinity.analysis import trinity_analysis
+            result = trinity_analysis(
+                ticker=tool_input["ticker"],
+                holding_days_min=tool_input.get("holding_days_min", 1),
+                client=None,  # 会从环境变量读取ANTHROPIC_API_KEY
+            )
+            return json.dumps(result, ensure_ascii=False, indent=2)
 
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
@@ -391,16 +343,17 @@ SYSTEM_PROMPT = """\
 You are an expert stock analysis assistant with access to real-time financial tools.
 
 When a user asks about a stock, decide which tool(s) to call based on their query:
-- Specific indicator question (e.g. "what does Bollinger say") → analyze_single_indicator
-- Multiple specific indicators → analyze_multiple_indicators  
-- "Full technical analysis" or "all indicators" → analyze_technicals
+- Specific indicator question → analyze_single_indicator
+- Multiple specific indicators → analyze_multiple_indicators
+- "Full technical analysis" / "all indicators" → analyze_technicals
 - Fundamentals / financials / earnings → analyze_fundamentals
 - Intrinsic value / DCF / overvalued? → analyze_valuation
 - 10-K / 10-Q / risk factors / deep research → deep_research_edgar
 - "Full analysis" / "should I buy?" / final verdict → get_full_analysis
 - Basic company info / price → get_stock_overview
+- 技术形态 / 趋势状态 / 时空 / 主涨段 / 加仓还是做T / 止盈点位 / 均线突破类型 → trinity_analysis
 
-You can call multiple tools in parallel when needed (e.g. user asks for both technicals and fundamentals).
+You can call multiple tools in parallel when needed.
 
 After receiving tool results, synthesize them into a clear, concise response. Always:
 1. Lead with the signal (Buy / Hold / Sell) and confidence
@@ -409,36 +362,33 @@ After receiving tool results, synthesize them into a clear, concise response. Al
 4. Flag any conflicting signals between indicators
 5. End with a brief risk caveat
 
-Format your response in a readable way using headers and bullet points where appropriate.
-Do NOT dump raw JSON at the user — always interpret the data.
+For trinity_analysis results, always mention:
+- The time-space state (时空状态)
+- Whether main wave is locked (主涨段是否锁定)
+- The specific exit trigger (具体止盈触发条件)
 
-CRITICAL: If a tool returns an "error" key or raises an exception, say EXACTLY what the error was.
-Do NOT make up data, estimates, or fallback analysis. Do NOT say "based on general knowledge".
-Simply say the tool failed with the specific error message and suggest the user try again.
-This applies even if you think you know the answer — tool failures must be reported honestly.
+Format your response using headers and bullet points where appropriate.
+Do NOT dump raw JSON — always interpret the data.
 
-You support Chinese language — if the user writes in Chinese, respond in Chinese.
+CRITICAL: If a tool returns an "error" key, report the exact error. Do NOT make up data.
+
+You support Chinese — if the user writes in Chinese, respond in Chinese.
 """
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4.  CHATBOT CLASS  (multi-turn conversation with tool loop)
+# 4.  CHATBOT CLASS
 # ─────────────────────────────────────────────────────────────────────────────
 
 class StockAnalystChatbot:
     def __init__(self, stream: bool = False):
-        self.client   = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.client  = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         self.history: list[dict] = []
-        self.stream   = stream
-        self.model    = "claude-sonnet-4-6"
+        self.stream  = stream
+        self.model   = "claude-sonnet-4-6"
 
     def chat(self, user_message: str) -> tuple[str, dict]:
-        """
-        Send a message and get a response.
-        Handles multi-step tool calling automatically.
-        Returns the final text response.
-        """
-        print(f"\n\U0001f464 User: {user_message}")
+        print(f"\n👤 User: {user_message}")
         self.history.append({"role": "user", "content": user_message})
         self._tool_data: dict = {}
 
@@ -451,47 +401,28 @@ class StockAnalystChatbot:
                 messages=self.history,
             )
 
-            # ── Case 1: Claude wants to call tools ───────────────────────────
             if response.stop_reason == "tool_use":
-                # Add Claude's response (which contains tool_use blocks) to history
-                self.history.append({
-                    "role": "assistant",
-                    "content": response.content,
-                })
-
-                # Execute all requested tools
+                self.history.append({"role": "assistant", "content": response.content})
                 tool_results = []
                 for block in response.content:
                     if block.type == "tool_use":
-                        print(f"  🔧 Calling tool: {block.name}({json.dumps(block.input)})")
+                        print(f"  🔧 Calling tool: {block.name}({json.dumps(block.input)[:80]}...)")
                         result = dispatch_tool(block.name, block.input)
                         tool_results.append({
-                            "type":        "tool_result",
+                            "type": "tool_result",
                             "tool_use_id": block.id,
-                            "content":     result,
+                            "content": result,
                         })
-                        # Store raw parsed result for frontend visualizations
                         try:
-                            parsed = json.loads(result)
-                            self._tool_data[block.name] = parsed
+                            self._tool_data[block.name] = json.loads(result)
                         except Exception:
                             pass
+                self.history.append({"role": "user", "content": tool_results})
 
-                # Send tool results back to Claude
-                self.history.append({
-                    "role": "user",
-                    "content": tool_results,
-                })
-                # Loop again — Claude may call more tools or produce final response
-
-            # ── Case 2: Claude has a final text response ──────────────────────
             elif response.stop_reason == "end_turn":
-                text = "".join(
-                    block.text for block in response.content
-                    if hasattr(block, "text")
-                )
+                text = "".join(b.text for b in response.content if hasattr(b, "text"))
                 preview = text[:300] + ("..." if len(text) > 300 else "")
-                print(f"\n\U0001f916 Claude: {preview}\n")
+                print(f"\n🤖 Claude: {preview}\n")
                 self.history.append({"role": "assistant", "content": text})
                 return text, self._tool_data
 
@@ -499,48 +430,43 @@ class StockAnalystChatbot:
                 return f"Unexpected stop reason: {response.stop_reason}", {}
 
     def reset(self):
-        """Clear conversation history."""
         self.history = []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5.  FastAPI backend  (used by React dashboard)
+# 5.  PYDANTIC MODELS (module-level for FastAPI)
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Request model (module-level so Pydantic can resolve it)
-# ─────────────────────────────────────────────────────────────────────────────
 try:
     from pydantic import BaseModel as _BaseModel
+
     class ChatRequest(_BaseModel):
         message: str
         session_id: str = "default"
+
 except ImportError:
     pass
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 6.  FASTAPI BACKEND
+# ─────────────────────────────────────────────────────────────────────────────
+
 def create_api():
-    """
-    Returns a FastAPI app.  Import and run with uvicorn:
-        uvicorn chatbot:create_api --factory --reload
-    """
     try:
         from fastapi import FastAPI
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import StreamingResponse
-        from pydantic import BaseModel
     except ImportError:
         raise ImportError("Run: pip install fastapi uvicorn")
 
-    app = FastAPI(title="Stock Analyst API")
+    app = FastAPI(title="AlphaLens Stock Analyst API")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],   # tighten in production
+        allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # One chatbot instance per session (for demo; use Redis for production)
     sessions: dict[str, StockAnalystChatbot] = {}
 
     @app.post("/chat")
@@ -562,10 +488,16 @@ def create_api():
             response, tool_data = bot.chat(req.message)
         except Exception as e:
             _self.dispatch_tool = original_dispatch
-            return {"response": f"Error: {str(e)}", "tool_calls": tool_calls_made, "tool_data": {}, "session_id": req.session_id}
+            return {"response": f"Error: {str(e)}", "tool_calls": tool_calls_made,
+                    "tool_data": {}, "session_id": req.session_id}
         _self.dispatch_tool = original_dispatch
 
-        return {"response": response, "tool_calls": tool_calls_made, "tool_data": tool_data, "session_id": req.session_id}
+        return {
+            "response":   response,
+            "tool_calls": tool_calls_made,
+            "tool_data":  tool_data,
+            "session_id": req.session_id,
+        }
 
     @app.delete("/chat/{session_id}")
     def reset_session(session_id: str):
@@ -575,8 +507,8 @@ def create_api():
 
     @app.get("/tools")
     def list_tools():
-        """Return all available tool schemas — useful for the frontend."""
-        return {"tools": [{"name": t["name"], "description": t["description"]} for t in TOOL_SCHEMAS]}
+        return {"tools": [{"name": t["name"], "description": t["description"]}
+                          for t in TOOL_SCHEMAS]}
 
     @app.get("/health")
     def health():
@@ -586,24 +518,23 @@ def create_api():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6.  CLI entry point
+# 7.  CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_cli():
-    parser = argparse.ArgumentParser(description="Stock Analyst CLI Chatbot")
-    parser.add_argument("--stream", action="store_true", help="Enable streaming output")
+    parser = argparse.ArgumentParser(description="AlphaLens Stock Analyst CLI")
+    parser.add_argument("--stream", action="store_true")
     args = parser.parse_args()
 
     bot = StockAnalystChatbot(stream=args.stream)
-
-    print("\n🤖 Stock Analyst Chatbot")
+    print("\n🤖 AlphaLens Stock Analyst")
     print("=" * 50)
-    print("Ask me anything about stocks. Examples:")
-    print("  • Analyze AAPL using Bollinger Bands and RSI")
-    print("  • What's the intrinsic value of NVDA?")
-    print("  • Run a full analysis on TSLA")
-    print("  • Compare fundamentals of MSFT and GOOGL")
-    print("  • Pull the 10-K risk factors for AAPL")
+    print("Examples:")
+    print("  • Analyze AAPL using Bollinger and RSI")
+    print("  • TSLA的三位一体时空状态是什么？")
+    print("  • NVDA现在是主涨段吗？该加仓还是做T？")
+    print("  • Run a full analysis on MSFT")
+    print("  • 我有30天持仓限制，分析AAPL的止盈策略")
     print("\nType 'reset' to clear history, 'quit' to exit.\n")
 
     while True:
@@ -612,7 +543,6 @@ def run_cli():
         except (EOFError, KeyboardInterrupt):
             print("\nGoodbye!")
             break
-
         if not user_input:
             continue
         if user_input.lower() == "quit":
@@ -622,11 +552,8 @@ def run_cli():
             bot.reset()
             print("🔄 Conversation reset.\n")
             continue
-
-        print("\nAssistant: ", end="", flush=True)
-        response = bot.chat(user_input)
-        print(response)
-        print()
+        response, _ = bot.chat(user_input)
+        print(f"\nAssistant: {response}\n")
 
 
 if __name__ == "__main__":
