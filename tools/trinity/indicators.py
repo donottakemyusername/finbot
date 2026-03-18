@@ -220,8 +220,8 @@ def compute_turning_points_and_divergence(df: pd.DataFrame) -> dict:
         peaks   = _find_peaks_simple(closes)
         troughs = _find_peaks_simple(-closes)
 
-    # 过滤掉距末尾太近的峰/谷（< 10根K线）
-    min_tail_dist = 10
+    # 过滤掉距末尾太近的峰/谷（< 5根K线）
+    min_tail_dist = 5
     n_bars = len(closes)
     peaks   = [p for p in peaks   if p < n_bars - min_tail_dist]
     troughs = [t for t in troughs if t < n_bars - min_tail_dist]
@@ -370,16 +370,16 @@ def compute_structural_levels(df: pd.DataFrame, div_result: dict) -> dict:
 
     turning_points = div_result.get("turning_points", [])
 
-    # key_resistance = 当前价上方最近的结构高点（前高）
+    # key_resistance = 当前价上方价格最近的结构高点（前高）
     peaks_above   = [tp for tp in turning_points if tp["type"] == "peak"   and tp["price"] > price]
-    # key_support   = 当前价下方最近的结构低点（前低）
+    # key_support   = 当前价下方价格最近的结构低点（前低）
     troughs_below = [tp for tp in turning_points if tp["type"] == "trough" and tp["price"] < price]
 
     # ── 压力位 ────────────────────────────────────────────────────────────────
     key_resistance    = None
     resistance_source = "none"
     if peaks_above:
-        nearest_peak   = max(peaks_above, key=lambda x: x["bar_index"])
+        nearest_peak   = min(peaks_above, key=lambda x: x["price"])
         key_resistance = nearest_peak["price"]
         resistance_source = "structural_peak"
     else:
@@ -395,7 +395,7 @@ def compute_structural_levels(df: pd.DataFrame, div_result: dict) -> dict:
     key_support    = None
     support_source = "none"
     if troughs_below:
-        nearest_trough = max(troughs_below, key=lambda x: x["bar_index"])
+        nearest_trough = max(troughs_below, key=lambda x: x["price"])
         key_support    = nearest_trough["price"]
         support_source = "structural_trough"
     else:
@@ -432,10 +432,70 @@ def compute_all_hard_signals(df: pd.DataFrame) -> dict:
     bb     = compute_bollinger_trinity(df)
     div    = compute_turning_points_and_divergence(df)
     levels = compute_structural_levels(df, div)
-    combined = {**ma, **macd, **bb, **div, **levels}
+    breakout = compute_ma_breakout_type(ma)
+    combined = {**ma, **macd, **bb, **div, **levels, **breakout}
 
     # 课程硬规则：调整不充分时底背离无效
     if not combined.get("adjustment_sufficient", False):
         combined["bot_divergence_hard_valid"] = False
 
     return combined
+
+
+def compute_ma_breakout_type(ma_signals: dict) -> dict:
+    """
+    Python硬判断均线突破类型（ABCD），减少Claude不确定性。
+
+    A类（典型突破）：bars_above>=8 且 dist>2% （或反向）
+    B类（慢速/盘整突破）：bars 3-7 或 刚突破(1-2)，dist在±2%内
+    C类（回抽突破）：price_vs_ma55序列先连续同向后1-2根反向再恢复
+    D类（反向测试）：全部在同侧，dist接近0但未穿越
+    """
+    if "error" in ma_signals:
+        return {"ma_breakout_type_py": "unknown", "ma_breakout_direction_py": "none"}
+
+    bars_above = ma_signals.get("bars_above_ma55_last10", 0)
+    bars_below = ma_signals.get("bars_below_ma55_last10", 0)
+    dist       = ma_signals.get("dist_from_ma55", 0)
+    pv_list    = ma_signals.get("price_vs_ma55_last10", [])
+
+    above_flags = [r["above_ma55"] for r in pv_list] if pv_list else []
+
+    # ── C类检测：序列先连续同向≥ 5根，后1-2根反向，再恢复同向 ────────
+    def _detect_c_type(flags: list[bool]) -> tuple[bool, str]:
+        if len(flags) < 8:
+            return False, "none"
+        # 向上回抽：多数True，中间出现少量False，最后回到True
+        for start in range(len(flags) - 7):
+            seg = flags[start:start + 8]
+            # 前5根全True，第6-7根False，第8根True
+            if all(seg[:5]) and not all(seg[5:7]) and seg[-1]:
+                return True, "up"
+            # 前5根全False，第6-7根True，第8根False
+            if not any(seg[:5]) and any(seg[5:7]) and not seg[-1]:
+                return True, "down"
+        return False, "none"
+
+    is_c, c_dir = _detect_c_type(above_flags)
+    if is_c:
+        return {"ma_breakout_type_py": "C", "ma_breakout_direction_py": c_dir}
+
+    # ── D类：全部在同侧，距离接近0（±2%内），未穿越 ───────────────
+    if (bars_above == 10 or bars_below == 10) and abs(dist) < 0.02:
+        direction = "up" if bars_above == 10 else "down"
+        return {"ma_breakout_type_py": "D", "ma_breakout_direction_py": direction}
+
+    # ── A类：强势突破，bars>=8 且 dist > 2% 且方向一致 ──────────────
+    if bars_above >= 8 and dist > 0.02:
+        return {"ma_breakout_type_py": "A", "ma_breakout_direction_py": "up"}
+    if bars_below >= 8 and dist < -0.02:
+        return {"ma_breakout_type_py": "A", "ma_breakout_direction_py": "down"}
+
+    # ── B类：慢速盘整突破（中间地带） ────────────────────────────
+    if abs(dist) < 0.02:
+        direction = "up" if dist >= 0 else "down"
+        return {"ma_breakout_type_py": "B", "ma_breakout_direction_py": direction}
+
+    # ── 其他默认为A类（距离远且方向明确） ──────────────────────
+    direction = "up" if dist > 0 else "down"
+    return {"ma_breakout_type_py": "A", "ma_breakout_direction_py": direction}

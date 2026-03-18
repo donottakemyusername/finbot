@@ -10,6 +10,8 @@ from __future__ import annotations
 import json, os
 import anthropic
 
+from tools.trinity.state import STATE_LABELS
+
 SYSTEM_PROMPT = """
 你是三位一体（Trinity Trading System）交易系统的分析引擎。
 三个维度：均线（MA）、结构（Structure）、时空（Time-Space）。
@@ -33,6 +35,16 @@ SYSTEM_PROMPT = """
 → 只看均线方向
 → 极强：signal 只能是 hold 或 buy，不能是 sell
 → 极弱：signal 只能是 hold 或 sell，不能是 buy
+→ ❗❗ 极强但均线空头排列（trend_alignment=bearish）：
+   这是“深跌后反弹”的典型形态（MACD动能先转多，均线还没跟上）
+   → signal 必须为 hold，不能给 buy
+   → confidence 最高 medium，因为均线方向与Macd极端状态矛盾
+   → key_risk 必须注明“极强状态但均线仍空头排列，可能是熊市反弹而非趋势反转”
+→ ❗❗ 极弱但均线多头排列（trend_alignment=bullish）：
+   这是“强势股洗盘”的典型形态（MACD动能先转空，均线还没跟上）
+   → signal 必须为 hold，不能给 sell
+   → confidence 最高 medium
+   → key_risk 必须注明“极弱状态但均线仍多头排列，可能是洗盘而非趋势反转”
 
 【规则2补充】极端状态持续不足3根K线时（extreme_bars_warning=true）
 → confidence 必须为 low，无论其他信号多强
@@ -70,6 +82,23 @@ SYSTEM_PROMPT = """
 → high confidence 需要至少两个维度信号共振（均线+背离，或均线+结构，或背离+结构）
 → 单一维度信号（只有背离，或只有均线破位）只能给 medium 或 low
 → 时空状态和信号方向矛盾时（如中性偏强却想给sell），confidence 降为 low
+
+【规则7】级别嵌套冲突（multi_timeframe_conflict）
+→ 当 multi_timeframe_conflict=true 时，大级别优先，小级别服从大级别。
+→ 日线极强 但 周/月线看空 → 这很可能是熊市反弹，不是趋势反转：
+   → confidence 最高 medium（不能 high）
+   → key_risk 必须提及周/月线看空的事实
+   → position_size 最多 moderate，不能 heavy
+→ 日线极弱 但 周/月线看多 → 可能只是洗盘回调：
+   → confidence 最高 medium
+   → key_risk 必须提及周/月线看多的事实
+   → position_size 最多 moderate
+
+【规则8】均线突破类型必须优先使用Python预判
+→ 硬指标里已有 ma_breakout_type_py（A/B/C/D）和 ma_breakout_direction_py（up/down）
+→ 当 ma_breakout_type_py 不等于 "unknown" 时，直接使用该值作为 ma55_breakout_type，禁止自行判断
+→ 不得输出与 ma_breakout_type_py 不一致的突破类型
+→ 只有 ma_breakout_type_py="unknown" 时才可自行分类
 """.strip()
 
 
@@ -364,6 +393,36 @@ FEW_SHOT_EXAMPLES = """
 """
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Token优化：精简传给Claude的数据，去掉大序列，只保留决策摘要
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 传给Claude时需要移除的冗长字段（Python已消化，不需要LLM重复处理）
+_HEAVY_KEYS = {
+    "macd_bar_history_60",     # 60个数字序列
+    "recent_30_closes",        # 30个收盘价
+    "price_vs_ma55_last10",    # 10个dict详情（已有bars_above/below摘要）
+}
+
+
+def _slim_hard_signals(signals: dict) -> dict:
+    """去掉大序列字段，保留Claude决策所需的摘要。"""
+    return {k: v for k, v in signals.items() if k not in _HEAVY_KEYS}
+
+
+def _slim_time_space(ts: dict) -> dict:
+    """精简time_space：只保留状态摘要，去掉事件列表等细节。"""
+    slim = {}
+    for k, v in ts.items():
+        if isinstance(v, dict):
+            # 去掉state里的事件列表等大字段
+            slim[k] = {sk: sv for sk, sv in v.items()
+                       if not isinstance(sv, list) or len(sv) <= 5}
+        else:
+            slim[k] = v
+    return slim
+
+
 def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     state      = time_space.get("daily_state", {})
     main_wave  = time_space.get("main_wave", {})
@@ -393,12 +452,32 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
                else "→ 极弱状态：signal只能是hold或sell。")
         )
     elif is_extreme:
-        emphasis = (
-            f"⚠️ 极端时空状态：{state.get('state_label')}，已持续 {bars_in_state} 根K线。\n"
-            "→ 结构信号无效（structure_overridden=true），只看均线方向。\n"
-            + ("→ 极强状态：signal只能是hold或buy。" if state_code == "extreme_strong"
-               else "→ 极弱状态：signal只能是hold或sell。")
+        # 检查极端状态与均线方向是否矛盾
+        ma_alignment = hard_signals.get("trend_alignment", "mixed")
+        extreme_ma_conflict = (
+            (state_code == "extreme_strong" and ma_alignment == "bearish")
+            or (state_code == "extreme_weak" and ma_alignment == "bullish")
         )
+        if extreme_ma_conflict:
+            conflict_desc = (
+                "极强但均线空头排列，典型深跌后反弹形态" if state_code == "extreme_strong"
+                else "极弱但均线多头排列，典型强势股洗盘形态"
+            )
+            emphasis = (
+                f"🚨🚨 极端状态与均线方向矛盾：{state.get('state_label')}，但均线{hard_signals.get('trend_alignment_zh', '')}！\n"
+                f"→ {conflict_desc}，MACD动能先行，均线滞后。\n"
+                f"→ signal 必须为 hold，不能给 buy 或 sell（等均线确认）。\n"
+                f"→ confidence 最高 medium。\n"
+                f"→ key_risk 必须注明“极端状态与均线方向矛盾，可能是熊市反弹/洗盘，非趋势反转”。\n"
+                "→ 结构信号无效（structure_overridden=true），只看均线方向。"
+            )
+        else:
+            emphasis = (
+                f"⚠️ 极端时空状态：{state.get('state_label')}，已持续 {bars_in_state} 根K线。\n"
+                "→ 结构信号无效（structure_overridden=true），只看均线方向。\n"
+                + ("→ 极强状态：signal只能是hold或buy。" if state_code == "extreme_strong"
+                   else "→ 极弱状态：signal只能是hold或sell。")
+            )
     elif state_code in ("mid_strong", "mid_weak"):
         emphasis = (
             f"当前时空状态：{state.get('state_label')}，第一假设是C类震荡整理。\n"
@@ -419,12 +498,55 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     else:
         emphasis = "当前处于正常状态，三要素均有效，请综合判断。"
 
+    # ── state_anomaly 警告 ────────────────────────────────────────────────────
+    state_anomaly = time_space.get("state_anomaly", False)
+    anomaly_note = ""
+    if state_anomaly:
+        prev = state.get("prev_state", "unknown")
+        anomaly_note = (
+            f"\n🚨 状态异常跳变：从「{STATE_LABELS.get(prev, prev)}」直接跳到「{state.get('state_label')}」，"
+            "跳过了中间状态。confidence 应降为 low，信号可能不稳定。"
+        )
+
+    # ── 多时间框架级别冲突 ──────────────────────────────────────────────────
+    mtf_conflict = time_space.get("multi_timeframe_conflict", False)
+    mtf_conflict_note = ""
+    if mtf_conflict:
+        mtf_type = time_space.get("mtf_conflict_type", "")
+        mtf_conflict_note = (
+            f"\n🚨🚨 多时间框架级别冲突：{mtf_type}\n"
+            "→ 大级别优先原则：周线/月线方向权重远高于日线。\n"
+            "→ confidence 最高 medium，position_size 必须为 light。\n"
+            "→ key_risk 必须注明大小级别方向矛盾，趋势未确认。"
+        )
+
+    # ── 精简硬指标（去掉大序列，只保留Claude决策所需的摘要数据）─────────────
+    slim_signals = _slim_hard_signals(hard_signals)
+    slim_ts      = _slim_time_space(time_space)
+
+    # ── 预计算的支撑压力位（直接注入prompt，防止Claude篡改）─────────────────
+    _ks  = hard_signals.get('key_support')
+    _kr  = hard_signals.get('key_resistance')
+    _lsl = hard_signals.get('long_stop_loss')
+    _ssl = hard_signals.get('short_stop_loss')
+    pinned_sr = (
+        f"\n🔒 Python预计算的支撑压力位（禁止修改，必须原样输出）：\n"
+        f"   key_support  = {_ks}\n"
+        f"   key_resistance = {_kr}\n"
+        f"   long_stop_loss = {_lsl}（= key_support×0.97）\n"
+        f"   short_stop_loss = {_ssl}（= key_resistance×1.03）\n"
+        f"   → structure.key_support 必须输出 {_ks}\n"
+        f"   → structure.key_resistance 必须输出 {_kr}\n"
+        f"   → suggested_action 里的止损价必须用 {_lsl}（做多）或 {_ssl}（做空）"
+    )
+
     return f"""
 ## 分析任务
 股票代码：{ticker}
 时空状态：{state.get('state_label', '未知')}（{state_code}，已持续 {bars_in_state} 根K线）
 主涨段状态：{'🔒 锁定中' if is_locked else '未锁定'}
 极端状态警告：{'🚨 是（<3根K线，confidence强制为low）' if extreme_bars_warning else '否'}
+{anomaly_note}{mtf_conflict_note}{pinned_sr}
 
 {emphasis}
 
@@ -433,12 +555,12 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
 ## 已计算的硬指标数据
 
 ```json
-{json.dumps(hard_signals, ensure_ascii=False, indent=2)}
+{json.dumps(slim_signals, ensure_ascii=False, indent=2)}
 ```
 
 时空状态详情：
 ```json
-{json.dumps(time_space, ensure_ascii=False, indent=2)}
+{json.dumps(slim_ts, ensure_ascii=False, indent=2)}
 ```
 
 {FEW_SHOT_EXAMPLES}
@@ -448,6 +570,9 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
 ## 三位一体知识库
 
 ### 均线突破四种类型
+
+⚠️ Python已预判 ma_breakout_type_py（A/B/C/D）和 ma_breakout_direction_py（up/down），
+   优先使用此预判值作为 ma_analysis.ma55_breakout_type 的输出，只在预判为"unknown"时才自行判断。
 
 **A类（典型突破）**：强势穿越均线，价格快速远离MA55超过2%后续不回头，方向性最强。
   识别：bars_above >= 8 且 dist > 0.02，或 bars_below >= 8 且 dist < -0.02。
@@ -567,8 +692,8 @@ key_support / key_resistance 不是止盈目标价，不要用这两个数字描
     "trend_direction": "<up/down/sideways/unknown>",
     "current_stage": "<1/2/3/4/5/6/unknown>",
     "d_to_a_probability": "<high/medium/low/na>",
-    "key_support": <直接使用硬指标里的key_support值，不要自行计算>,
-    "key_resistance": <直接使用硬指标里的key_resistance值，不要自行计算>,
+    "key_support": {_ks if _ks is not None else 'null'},
+    "key_resistance": {_kr if _kr is not None else 'null'},
     "likely_next_move": "<up/down/sideways/unknown>",
     "structure_overridden": <true/false>,
     "structure_note": "<40字以内中文说明>"

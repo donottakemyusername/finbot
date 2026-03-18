@@ -111,11 +111,27 @@ def compute_current_state(events: list[dict], total_bars: int) -> dict:
         "bottom_cross":       "mid_strong",
         "high_golden_cross":  "strong",
     }
+
+    # 正常状态流转顺序（用于检测异常跳变）
+    _NORMAL_ORDER = [
+        "mid_strong", "extreme_strong", "strong",
+        "mid_weak", "extreme_weak", "weak",
+    ]
+    _ORDER_IDX = {s: i for i, s in enumerate(_NORMAL_ORDER)}
+    state_anomaly = False
+    prev_state    = current_state
+
     for ev in events:
         if ev["bar"] <= last_bottom["bar"]:
             continue
         if ev["event"] in transition_map.get(current_state, []):
-            current_state  = next_state_map[ev["event"]]
+            new_state = next_state_map[ev["event"]]
+            # 检测跳跃幅度 > 2 个状态的异常跳变
+            gap = abs(_ORDER_IDX.get(new_state, 0) - _ORDER_IDX.get(current_state, 0))
+            if gap > 2:
+                state_anomaly = True
+            prev_state     = current_state
+            current_state  = new_state
             last_event_bar = ev["bar"]
             last_event_name = ev["event"]
 
@@ -128,13 +144,16 @@ def compute_current_state(events: list[dict], total_bars: int) -> dict:
         "is_extreme":    current_state in IS_EXTREME,
         "bars_in_state": bars_in_state,
         "last_event":    last_event_name,
+        "prev_state":    prev_state,
+        "state_anomaly": state_anomaly,
     }
 
 
 def _unknown() -> dict:
     return {"current_state": "unknown", "state_label": "未知",
             "is_bullish": False, "is_bearish": False, "is_extreme": False,
-            "bars_in_state": 0, "last_event": "none"}
+            "bars_in_state": 0, "last_event": "none",
+            "prev_state": "unknown", "state_anomaly": False}
 
 
 def detect_boundary_window(events: list[dict], total_bars: int, window: int = 3) -> dict:
@@ -291,6 +310,9 @@ def compute_time_space_state(
     bars_in_state = state_daily.get("bars_in_state", 0)
     extreme_bars_warning = bool(is_extreme and bars_in_state < 3)
 
+    # ── state_anomaly：状态机检测到异常跳变（跳过了中间状态） ──────────
+    state_anomaly = state_daily.get("state_anomaly", False)
+
     return {
         "daily_state":           state_daily,
         "weekly_state":          state_weekly,
@@ -299,5 +321,6 @@ def compute_time_space_state(
         "main_wave":             main_wave,
         "exit_guidance":         exit_guidance,
         "first_assumption":      first_assumption,
-        "extreme_bars_warning":  extreme_bars_warning,  # ← 新增：True时prompt强制confidence=low
+        "extreme_bars_warning":  extreme_bars_warning,  # ← True时prompt强制confidence=low
+        "state_anomaly":         state_anomaly,         # ← True时prompt提示状态跳变异常
     }

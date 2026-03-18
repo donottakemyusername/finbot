@@ -18,6 +18,57 @@ from tools.trinity.state import compute_time_space_state
 from tools.trinity.prompt import call_claude_for_soft_signals
 
 
+def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
+    """后置校验：将Claude可能篡改的字段强制覆盖为Python预算值。
+
+    已知复发问题：Claude经常忽略硬指标里的 key_support/key_resistance，
+    自行挑选历史高低点，导致支撑压力位和止损价全部偏移。
+    """
+    structure = pattern_analysis.get("structure", {})
+    composite = pattern_analysis.get("composite", {})
+
+    # ── 支撑 / 压力 ─────────────────────────────────────────────────────────
+    hs_support    = hard_signals.get("key_support")
+    hs_resistance = hard_signals.get("key_resistance")
+    hs_lsl        = hard_signals.get("long_stop_loss")
+    hs_ssl        = hard_signals.get("short_stop_loss")
+
+    if hs_support is not None:
+        structure["key_support"] = hs_support
+    if hs_resistance is not None:
+        structure["key_resistance"] = hs_resistance
+
+    # ── 止损价 —— 替换 suggested_action 里的错误止损数字 ─────────────────────
+    action = composite.get("suggested_action", "")
+    if action and hs_lsl is not None and hs_ssl is not None:
+        # 仅在止损价偏差超过 0.5% 时才替换，避免不必要修改
+        import re
+        # 匹配"止损设在 XXX"或"止损 XXX"或"stop XXX"后面跟随的数字
+        pattern = r'(止损[^\d]{0,4})([\d]+\.?\d*)'
+        matches = list(re.finditer(pattern, action))
+        if matches:
+            # 根据信号方向决定应该用哪个止损
+            signal = composite.get("signal", "hold")
+            if signal in ("buy", "strong_buy"):
+                correct_stop = hs_lsl
+            elif signal in ("sell", "strong_sell"):
+                correct_stop = hs_ssl
+            else:
+                # hold 信号下取离当前价较近的止损
+                price = hard_signals.get("current_price", 0)
+                correct_stop = hs_lsl if abs(price - hs_lsl) < abs(price - hs_ssl) else hs_ssl
+
+            for m in matches:
+                old_val = float(m.group(2))
+                if abs(old_val - correct_stop) / max(correct_stop, 1) > 0.005:
+                    action = action.replace(m.group(0), f"{m.group(1)}{correct_stop}")
+            composite["suggested_action"] = action
+
+    pattern_analysis["structure"] = structure
+    pattern_analysis["composite"] = composite
+    return pattern_analysis
+
+
 def trinity_analysis(
     ticker: str,
     period: str = "2y",
@@ -89,6 +140,9 @@ def trinity_analysis(
     # ── Step 5: 构建前端图表数据（最近120日）────────────────────────────────
     price_chart_data = _build_chart_data(df_daily)
 
+    # ── Step 5b: 后置校验 — 强制覆盖Claude可能篡改的硬指标字段 ───────────────
+    pattern_analysis = _enforce_hard_overrides(pattern_analysis, hard_signals)
+
     # ── Step 6: 精简摘要 ──────────────────────────────────────────────────────
     composite = pattern_analysis.get("composite", {})
     structure = pattern_analysis.get("structure", {})
@@ -107,6 +161,7 @@ def trinity_analysis(
         "is_extreme":           state.get("is_extreme", False),
         "is_bullish":           state.get("is_bullish", False),
         "bars_in_state":        state.get("bars_in_state", 0),
+        "state_anomaly":        state.get("state_anomaly", False),
         "weekly_state_label":   time_space.get("weekly_state", {}).get("state_label", "未知"),
         "weekly_is_bullish":    time_space.get("weekly_state", {}).get("is_bullish", False),
         "j1_weekly_confirmed":  main_wave.get("j1_weekly_confirmed", False),
@@ -125,6 +180,7 @@ def trinity_analysis(
         "ma233":                hard_signals.get("ma233"),
         "current_price":        hard_signals.get("current_price"),
         "ma_breakout_type":     ma_ana.get("ma55_breakout_type", "none"),
+        "ma_breakout_type_py":  hard_signals.get("ma_breakout_type_py", "unknown"),
         "ma_breakout_direction": ma_ana.get("ma55_breakout_direction", ""),
         "pullback_opportunity": ma_ana.get("pullback_opportunity", False),
         "divergence_type":      div.get("divergence_type", "none"),
@@ -148,6 +204,8 @@ def trinity_analysis(
         "reduce_1st":           exit_g.get("reduce_1st_long", exit_g.get("reduce_1st", "")),
         "reduce_2nd":           exit_g.get("reduce_2nd_long", exit_g.get("reduce_2nd", "")),
         "holding_constraint":   exit_g.get("holding_constraint_note", ""),
+        "multi_timeframe_conflict": time_space.get("multi_timeframe_conflict", False),
+        "mtf_conflict_type":       time_space.get("mtf_conflict_type", ""),
     }
 
     return {

@@ -279,6 +279,36 @@ def get_full_analysis(
     return json.dumps(result, indent=2)
 
 
+# ── Tool 8: Trinity Analysis (三位一体) ──────────────────────────────────────
+
+@mcp.tool()
+def trinity_analysis(
+    ticker: str,
+    holding_days_min: int = 1,
+) -> str:
+    """
+    三位一体技术分析（Trinity Trading System）：基于均线、结构、时空三个维度深度分析股票。
+
+    功能：
+      • 时空状态识别（极强/强/中性偏强/中性偏弱/极弱/弱）
+      • 结构分类（A五段式/B双平台/C单平台/D三段式）
+      • 主涨段确认与锁定状态判断
+      • 均线突破类型（A典型/B慢速/C回抽/D反向测试）
+      • 顶底背离检测
+      • 分层止盈建议
+
+    Args:
+        ticker          : 股票代码，如 "AAPL", "TSLA"
+        holding_days_min: 最少持有天数（0=无限制，1=默认，30=锁定期）
+    """
+    from tools.trinity.analysis import trinity_analysis as _trinity
+    result = _trinity(
+        ticker=ticker,
+        holding_days_min=holding_days_min,
+    )
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
