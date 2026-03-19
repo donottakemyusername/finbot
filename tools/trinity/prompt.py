@@ -99,6 +99,11 @@ SYSTEM_PROMPT = """
 → 当 ma_breakout_type_py 不等于 "unknown" 时，直接使用该值作为 ma55_breakout_type，禁止自行判断
 → 不得输出与 ma_breakout_type_py 不一致的突破类型
 → 只有 ma_breakout_type_py="unknown" 时才可自行分类
+
+【规则9】时空状态标签必须精确使用Python数据
+→ 描述周线/月线状态时，必须使用 time_space 数据中的 state_label 字段原文
+→ "弱"和"极弱"是两个不同状态，绝不能混用——"弱"不可以写成"极弱"，"极强"不可以写成"强"
+→ key_risk 和 suggested_action 里提及周/月线状态时，措辞必须与 state_label 完全一致
 """.strip()
 
 
@@ -505,7 +510,9 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
         prev = state.get("prev_state", "unknown")
         anomaly_note = (
             f"\n🚨 状态异常跳变：从「{STATE_LABELS.get(prev, prev)}」直接跳到「{state.get('state_label')}」，"
-            "跳过了中间状态。confidence 应降为 low，信号可能不稳定。"
+            "跳过了中间状态。confidence 应降为 low，信号可能不稳定。\n"
+            "→ 注意：状态异常仅影响confidence和signal，结构分析（pattern_type/current_stage）"
+            "仍需根据turning_points正常判断，不要输出unknown。"
         )
 
     # ── 多时间框架级别冲突 ──────────────────────────────────────────────────
@@ -636,7 +643,9 @@ D类（三段式）：4个拐点，第三段决定演化方向
 6. resistance_source="structural_peak" = 结构前高，权重最高
 7. resistance_source="ma55_plus5pct_fallback" = 价格已超越所有结构前高，阻力使用MA55+5%做备用参考。
    此时在报告中应注明"当前价已突破所有结构前高，阻力为参考位（MA55上方5%）"，而非写成"结构高点"。
-8. 绝对不要新增任何非Python计算的支撑/阻力价格，包括"MA55 + X%"、"前高 + Y点"等自创价位。
+8. resistance_source="price_plus5pct_fallback" = 价格远超MA55（MA55+5%仍低于当前价），阻力使用当前价+5%做备用参考。
+   此时在报告中应注明"价格远离均线，阻力为参考位（当前价上方5%）"。
+9. 绝对不要新增任何非Python计算的支撑/阻力价格，包括"MA55 + X%"、"前高 + Y点"等自创价位。
 
 ### 止损设置规则（必须区分方向，百分比固定不可更改）
 

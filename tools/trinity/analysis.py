@@ -54,14 +54,31 @@ def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
             elif signal in ("sell", "strong_sell"):
                 correct_stop = hs_ssl
             else:
-                # hold 信号下取离当前价较近的止损
-                price = hard_signals.get("current_price", 0)
-                correct_stop = hs_lsl if abs(price - hs_lsl) < abs(price - hs_ssl) else hs_ssl
+                # hold 信号下根据止损上下文中的持仓方向关键词来决定
+                correct_stop = None  # 不做全局替换，按上下文逐个处理
 
             for m in matches:
                 old_val = float(m.group(2))
-                if abs(old_val - correct_stop) / max(correct_stop, 1) > 0.005:
-                    action = action.replace(m.group(0), f"{m.group(1)}{correct_stop}")
+                if correct_stop is not None:
+                    # buy/sell 信号：全局替换
+                    stop_to_use = correct_stop
+                else:
+                    # hold 信号：根据止损前后文判断方向
+                    ctx_start = max(0, m.start() - 15)
+                    ctx = action[ctx_start:m.end()]
+                    if any(kw in ctx for kw in ["多头", "做多", "多仓", "持股", "持仓"]):
+                        stop_to_use = hs_lsl
+                    elif any(kw in ctx for kw in ["空头", "做空", "空仓", "卖出"]):
+                        stop_to_use = hs_ssl
+                    else:
+                        # 无上下文关键词时，根据止损数值与价格的相对位置判断
+                        price = hard_signals.get("current_price", 0)
+                        if old_val < price:
+                            stop_to_use = hs_lsl  # 止损在价格下方 → 做多止损
+                        else:
+                            stop_to_use = hs_ssl  # 止损在价格上方 → 做空止损
+                if abs(old_val - stop_to_use) / max(stop_to_use, 1) > 0.005:
+                    action = action.replace(m.group(0), f"{m.group(1)}{stop_to_use}")
             composite["suggested_action"] = action
 
     pattern_analysis["structure"] = structure

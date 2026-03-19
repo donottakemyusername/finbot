@@ -112,11 +112,12 @@ def compute_current_state(events: list[dict], total_bars: int) -> dict:
         "high_golden_cross":  "strong",
     }
 
-    # 正常状态流转顺序（用于检测异常跳变）
+    # 正常状态流转顺序（用于检测异常跳变）——注意这是一个循环
     _NORMAL_ORDER = [
         "mid_strong", "extreme_strong", "strong",
         "mid_weak", "extreme_weak", "weak",
     ]
+    _N = len(_NORMAL_ORDER)
     _ORDER_IDX = {s: i for i, s in enumerate(_NORMAL_ORDER)}
     state_anomaly = False
     prev_state    = current_state
@@ -126,9 +127,13 @@ def compute_current_state(events: list[dict], total_bars: int) -> dict:
             continue
         if ev["event"] in transition_map.get(current_state, []):
             new_state = next_state_map[ev["event"]]
-            # 检测跳跃幅度 > 2 个状态的异常跳变
-            gap = abs(_ORDER_IDX.get(new_state, 0) - _ORDER_IDX.get(current_state, 0))
-            if gap > 2:
+            # 用循环距离检测异常跳变（正向=顺着周期方向）
+            idx_old = _ORDER_IDX.get(current_state, 0)
+            idx_new = _ORDER_IDX.get(new_state, 0)
+            fwd_gap = (idx_new - idx_old) % _N   # 正向距离
+            bwd_gap = (idx_old - idx_new) % _N   # 反向距离
+            # 正向跳 >2 步 或 反向跳（快捷路径如 high_golden_cross）>= 1 步
+            if fwd_gap > 2 or (bwd_gap >= 1 and bwd_gap < _N - 1):
                 state_anomaly = True
             prev_state     = current_state
             current_state  = new_state
@@ -313,6 +318,33 @@ def compute_time_space_state(
     # ── state_anomaly：状态机检测到异常跳变（跳过了中间状态） ──────────
     state_anomaly = state_daily.get("state_anomaly", False)
 
+    # ── multi_timeframe_conflict：日线与周/月线方向矛盾 ──────────────────
+    daily_bull  = state_daily.get("is_bullish", False)
+    daily_bear  = state_daily.get("is_bearish", False)
+    weekly_bull = state_weekly.get("is_bullish", False)
+    weekly_bear = state_weekly.get("is_bearish", False)
+    month_bull  = state_monthly.get("is_bullish", False)
+    month_bear  = state_monthly.get("is_bearish", False)
+
+    multi_timeframe_conflict = False
+    mtf_conflict_type = ""
+    if daily_bull and (weekly_bear or month_bear):
+        multi_timeframe_conflict = True
+        parts = []
+        if weekly_bear:
+            parts.append(f"周线{state_weekly.get('state_label', '空')}")
+        if month_bear:
+            parts.append(f"月线{state_monthly.get('state_label', '空')}")
+        mtf_conflict_type = f"日线多头（{state_daily.get('state_label')}）但{'、'.join(parts)}，大级别偏空"
+    elif daily_bear and (weekly_bull or month_bull):
+        multi_timeframe_conflict = True
+        parts = []
+        if weekly_bull:
+            parts.append(f"周线{state_weekly.get('state_label', '多')}")
+        if month_bull:
+            parts.append(f"月线{state_monthly.get('state_label', '多')}")
+        mtf_conflict_type = f"日线空头（{state_daily.get('state_label')}）但{'、'.join(parts)}，大级别偏多"
+
     return {
         "daily_state":           state_daily,
         "weekly_state":          state_weekly,
@@ -323,4 +355,6 @@ def compute_time_space_state(
         "first_assumption":      first_assumption,
         "extreme_bars_warning":  extreme_bars_warning,  # ← True时prompt强制confidence=low
         "state_anomaly":         state_anomaly,         # ← True时prompt提示状态跳变异常
+        "multi_timeframe_conflict": multi_timeframe_conflict,
+        "mtf_conflict_type":        mtf_conflict_type,
     }

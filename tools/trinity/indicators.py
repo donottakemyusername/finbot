@@ -113,6 +113,7 @@ def compute_ma_signals(df: pd.DataFrame) -> dict:
         "ma233_slope":             round(ma233_slope, 6),
         "dist_from_ma55":          round(dist_ma55, 4),
         "dist_from_ma233":         round(dist_ma233, 4),
+        "overextension_hard":      bool(abs(dist_ma55) > 0.15 or abs(dist_ma233) > 0.40),
         "price_vs_ma55_last10":    price_vs_ma55,
         "bars_above_ma55_last10":  bars_above,
         "bars_below_ma55_last10":  10 - bars_above,
@@ -383,10 +384,14 @@ def compute_structural_levels(df: pd.DataFrame, div_result: dict) -> dict:
         key_resistance = nearest_peak["price"]
         resistance_source = "structural_peak"
     else:
-        # fallback1：MA55上方5%（比历史最高价更有近期操作意义）
-        if ma55_val is not None:
+        # fallback1：MA55上方5%（只有在仍高于当前价时才有意义）
+        if ma55_val is not None and ma55_val * 1.05 > price:
             key_resistance = round(ma55_val * 1.05, 4)
             resistance_source = "ma55_plus5pct_fallback"
+        # fallback2：当前价上方5%（价格已远超MA55，用当前价做参考）
+        elif ma55_val is not None:
+            key_resistance = round(price * 1.05, 4)
+            resistance_source = "price_plus5pct_fallback"
         else:
             key_resistance = round(float(df["High"].max()), 4)
             resistance_source = "period_high"
@@ -394,10 +399,21 @@ def compute_structural_levels(df: pd.DataFrame, div_result: dict) -> dict:
     # ── 支撑位 ────────────────────────────────────────────────────────────────
     key_support    = None
     support_source = "none"
-    if troughs_below:
-        nearest_trough = max(troughs_below, key=lambda x: x["price"])
-        key_support    = nearest_trough["price"]
-        support_source = "structural_trough"
+
+    # 也收集"刚跌破"的近距离谷底（高于价格但 <3%）
+    all_troughs = [tp for tp in turning_points if tp["type"] == "trough"]
+    near_troughs_above = [tp for tp in all_troughs
+                          if tp["price"] >= price and (tp["price"] - price) / price < 0.03]
+
+    # 候选集合：严格低于价格的谷底 + 刚被跌破的近距离谷底
+    candidates = list(troughs_below) + near_troughs_above
+    if candidates:
+        # 选离当前价最近的谷底
+        best = min(candidates, key=lambda x: abs(x["price"] - price))
+        key_support    = best["price"]
+        support_source = ("structural_trough_just_broken"
+                          if best["price"] >= price
+                          else "structural_trough")
     else:
         # fallback1：MA233（中期均线支撑，比2年历史低点有操作意义）
         if ma233_val is not None and ma233_val < price:
