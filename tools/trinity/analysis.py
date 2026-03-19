@@ -13,30 +13,50 @@ from tools.trinity.indicators import (
     compute_all_hard_signals,
     compute_bollinger_trinity,
     compute_macd_signals,
+    compute_divergence_summary,
+    compute_ma_analysis_summary,
 )
 from tools.trinity.state import compute_time_space_state
 from tools.trinity.prompt import call_claude_for_soft_signals
 
 
-def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
-    """后置校验：将Claude可能篡改的字段强制覆盖为Python预算值。
+def _merge_claude_with_python(claude_output: dict, hard_signals: dict,
+                              time_space: dict) -> dict:
+    """v2: 将Claude精简输出与Python预算字段合并为完整 pattern_analysis。
 
-    已知复发问题：Claude经常忽略硬指标里的 key_support/key_resistance，
-    自行挑选历史高低点，导致支撑压力位和止损价全部偏移。
+    Claude只输出 structure + composite（~12字段）。
+    divergence / ma_analysis / key_support / key_resistance / structure_overridden
+    全部由Python确定性填充，不再依赖Claude。
     """
-    structure = pattern_analysis.get("structure", {})
+    divergence  = compute_divergence_summary(hard_signals)
+    ma_analysis = compute_ma_analysis_summary(hard_signals)
+
+    structure = claude_output.get("structure", {})
+    # 注入Python预算的支撑压力位
+    structure["key_support"]    = hard_signals.get("key_support")
+    structure["key_resistance"] = hard_signals.get("key_resistance")
+    # structure_overridden 由时空状态决定
+    state = time_space.get("daily_state", {})
+    structure["structure_overridden"] = state.get("is_extreme", False)
+
+    return {
+        "divergence":  divergence,
+        "ma_analysis": ma_analysis,
+        "structure":   structure,
+        "composite":   claude_output.get("composite", {}),
+    }
+
+
+def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
+    """后置校验：修正suggested_action里的止损价 + 剥离公式文本。
+
+    v2简化版：key_support/key_resistance已由Python在merge阶段注入，
+    这里只处理Claude自由文本中的止损数字和公式泄露。
+    """
     composite = pattern_analysis.get("composite", {})
 
-    # ── 支撑 / 压力 ─────────────────────────────────────────────────────────
-    hs_support    = hard_signals.get("key_support")
-    hs_resistance = hard_signals.get("key_resistance")
     hs_lsl        = hard_signals.get("long_stop_loss")
     hs_ssl        = hard_signals.get("short_stop_loss")
-
-    if hs_support is not None:
-        structure["key_support"] = hs_support
-    if hs_resistance is not None:
-        structure["key_resistance"] = hs_resistance
 
     # ── 止损价 —— 替换 suggested_action 里的错误止损数字 ─────────────────────
     action = composite.get("suggested_action", "")
@@ -76,12 +96,32 @@ def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
                         if old_val < price:
                             stop_to_use = hs_lsl  # 止损在价格下方 → 做多止损
                         else:
-                            stop_to_use = hs_ssl  # 止损在价格上方 → 做空止损
-                if abs(old_val - stop_to_use) / max(stop_to_use, 1) > 0.005:
+                            # 止损在价格上方，通常是做空止损。
+                            # 但若整体建议是多头观望/不建议追空，应强制换为 long_stop_loss。
+                            # 典型bug：Claude在hold信号里写了short_stop_loss数值，
+                            # _enforce_hard_overrides误判为"正确"（差值=0），实际方向错误。
+                            _long_bias_kws = [
+                                "不建议追空", "多头持仓者", "持股者", "轻仓观望",
+                                "持多仓", "多头仓位", "已持多仓", "做多止损",
+                            ]
+                            if any(kw in action for kw in _long_bias_kws):
+                                stop_to_use = hs_lsl  # 整体是多头观望，强制用做多止损
+                            else:
+                                stop_to_use = hs_ssl  # 真正的做空场景
+                # 替换条件：偏差 > 0.5%，OR 数值正确但方向错误（wrong type already == correct value 的罕见情况已由上方逻辑修正，这里兜底）
+                if abs(old_val - stop_to_use) / max(stop_to_use, 1) > 0.005 or old_val != stop_to_use:
                     action = action.replace(m.group(0), f"{m.group(1)}{stop_to_use}")
-            composite["suggested_action"] = action
 
-    pattern_analysis["structure"] = structure
+        # ── 剥离禁止出现的公式说明（如"（= 支撑3.79 × 0.97）"等） ────────────
+        import re as _re
+        # 匹配括号型公式：（= ...× 0.97）等
+        action = _re.sub(r'[（(]\s*=?\s*[^）)]*×\s*[\d.]+\s*[）)]', '', action)
+        # 匹配"（做多止损，支撑 $X × 0.97）"类型
+        action = _re.sub(r'[（(][^）)]{0,30}[\d.]+\s*×\s*[\d.]+[^）)]{0,10}[）)]', '', action)
+        # 匹配"（根据key_support XXX × 0.97计算）"
+        action = _re.sub(r'[（(][^）)]{0,50}计算[^）)]{0,10}[）)]', '', action)
+        composite["suggested_action"] = action.strip()
+
     pattern_analysis["composite"] = composite
     return pattern_analysis
 
@@ -140,24 +180,27 @@ def trinity_analysis(
         holding_days_min=holding_days_min,
     )
 
-    # ── Step 4: Claude 软判断 ─────────────────────────────────────────────────
+    # ── Step 4: Claude 软判断（v2: 只输出 structure + composite）────────────
     claude_input = {
         **hard_signals,
         "bb_hourly_j_minus1":  bb_hourly,
         "weekly_macd_j1":      weekly_macd,
         "monthly_macd_j2":     monthly_macd,
     }
-    pattern_analysis = call_claude_for_soft_signals(
+    claude_output = call_claude_for_soft_signals(
         ticker=ticker,
         hard_signals=claude_input,
         time_space=time_space,
         client=client,
     )
 
+    # ── Step 4b: Python合并 — divergence/ma_analysis/支撑压力由Python填充 ──
+    pattern_analysis = _merge_claude_with_python(claude_output, hard_signals, time_space)
+
     # ── Step 5: 构建前端图表数据（最近120日）────────────────────────────────
     price_chart_data = _build_chart_data(df_daily)
 
-    # ── Step 5b: 后置校验 — 强制覆盖Claude可能篡改的硬指标字段 ───────────────
+    # ── Step 5b: 后置校验 — 修正suggested_action中止损价 + 剥离公式 ────────
     pattern_analysis = _enforce_hard_overrides(pattern_analysis, hard_signals)
 
     # ── Step 6: 精简摘要 ──────────────────────────────────────────────────────

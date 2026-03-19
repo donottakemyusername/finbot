@@ -408,6 +408,12 @@ When describing trinity_analysis results in Chinese, follow these rules strictly
   绝对不要用 MA55 × 1.03 当做空止损！做空止损只能用 short_stop_loss（= key_resistance × 1.03 已预算）。
   绝对不要把 key_support / key_resistance 本身当作止损价。
   止损写法固定格式：「止损设在 <止损价数字>」，不附加任何百分比解释。
+  ⚠️ 禁止出现任何形式的括号公式说明，例如绝对禁止写：
+    - "（做多止损，支撑 $3.79 × 0.97）"
+    - "（= key_resistance × 1.03）"
+    - "（根据key_support × 0.97计算）"
+    - "上方X%约XXX" 或 "下方X%约XXX"
+    只写最终数字，不写来源，不写推导过程，不写括号注释。
   ⚠️ 止损方向必须与持仓方向一致：
     - 讨论多头持仓时 → 只用 long_stop_loss
     - 讨论空头持仓时 → 只用 short_stop_loss
@@ -432,6 +438,33 @@ CRITICAL: If a tool returns an "error" key, report the exact error. Do NOT make 
 
 You support Chinese — if the user writes in Chinese, respond in Chinese.
 """
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3b. POST-PROCESSING: strip formula leaks from chatbot output
+# ─────────────────────────────────────────────────────────────────────────────
+import re as _re
+
+def _strip_formula_leaks(text: str) -> str:
+    """Remove formula explanations that Claude sometimes adds despite instructions.
+
+    Examples removed:
+      （支撑 $541.64 × 0.97）
+      （= key_support × 0.97）
+      （做多止损，支撑 $3.79 × 0.97）
+      （根据key_support 3.79 × 0.97计算）
+    """
+    # （/( ... × 数字 ... ）/)
+    text = _re.sub(r'[（(]\s*=?\s*[^）)]*×\s*[\d.]+\s*[）)]', '', text)
+    # （做多止损，支撑 $X × 0.97）
+    text = _re.sub(r'[（(][^）)]{0,30}[\d.]+\s*×\s*[\d.]+[^）)]{0,10}[）)]', '', text)
+    # （根据...计算）
+    text = _re.sub(r'[（(][^）)]{0,50}计算[^）)]{0,10}[）)]', '', text)
+    # （= key_support/key_resistance ...）
+    text = _re.sub(r'[（(]\s*=?\s*key_(?:support|resistance)[^）)]*[）)]', '', text)
+    # （支撑 $X × 0.97） — with dollar sign
+    text = _re.sub(r'[（(]\s*(?:支撑|阻力)\s*\$?[\d.]+\s*×\s*[\d.]+\s*[）)]', '', text)
+    return text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -479,6 +512,7 @@ class StockAnalystChatbot:
 
             elif response.stop_reason == "end_turn":
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                text = _strip_formula_leaks(text)
                 preview = text[:300] + ("..." if len(text) > 300 else "")
                 print(f"\n🤖 Claude: {preview}\n")
                 self.history.append({"role": "assistant", "content": text})

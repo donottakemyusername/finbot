@@ -515,3 +515,102 @@ def compute_ma_breakout_type(ma_signals: dict) -> dict:
     # ── 其他默认为A类（距离远且方向明确） ──────────────────────
     direction = "up" if dist > 0 else "down"
     return {"ma_breakout_type_py": "A", "ma_breakout_direction_py": direction}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 纯Python计算的摘要（v2架构：从Claude输出中移除，改由Python确定性生成）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_divergence_summary(hard_signals: dict) -> dict:
+    """100% Python确定性计算背离摘要，不再依赖Claude判断。"""
+    top_valid = hard_signals.get("top_divergence_hard_valid", False)
+    bot_valid = hard_signals.get("bot_divergence_hard_valid", False)
+
+    # divergence_type
+    if top_valid and bot_valid:
+        div_type = "both"
+    elif top_valid:
+        div_type = "top"
+    elif bot_valid:
+        div_type = "bottom"
+    else:
+        div_type = "none"
+
+    # divergence_strength（从原始百分比计算）
+    strength = "none"
+    raw = None
+    if top_valid:
+        raw = hard_signals.get("top_divergence_raw") or {}
+    elif bot_valid:
+        raw = hard_signals.get("bot_divergence_raw") or {}
+    if raw:
+        p_pct = abs(raw.get("price_change_pct", 0))
+        m_pct = abs(raw.get("macd_change_pct", 0))
+        if p_pct > 0.05 and m_pct > 0.30:
+            strength = "strong"
+        elif p_pct > 0.02 or m_pct > 0.15:
+            strength = "medium"
+        else:
+            strength = "weak"
+
+    # divergence_note（直接用Python预判文字）
+    if top_valid:
+        note = hard_signals.get("top_divergence_note_py", "")
+    elif bot_valid:
+        note = hard_signals.get("bot_divergence_note_py", "")
+    else:
+        # 无有效背离时，取不成立的说明
+        note = hard_signals.get("top_divergence_note_py", "") or hard_signals.get("bot_divergence_note_py", "")
+
+    return {
+        "top_divergence_valid": top_valid,
+        "bot_divergence_valid": bot_valid,
+        "divergence_strength":  strength,
+        "divergence_type":      div_type,
+        "divergence_note":      note,
+    }
+
+
+def compute_ma_analysis_summary(hard_signals: dict) -> dict:
+    """100% Python确定性计算均线分析摘要，不再依赖Claude判断。"""
+    breakout_type = hard_signals.get("ma_breakout_type_py", "unknown")
+    breakout_dir  = hard_signals.get("ma_breakout_direction_py", "none")
+    breakout_valid = breakout_type not in ("none", "unknown")
+    overextension = hard_signals.get("overextension_hard", False)
+    dist = hard_signals.get("dist_from_ma55", 0)
+    alignment_zh = hard_signals.get("trend_alignment_zh", "混沌排列")
+    alignment_bracket = hard_signals.get("trend_alignment_bracket", "")
+
+    # pullback判断
+    pullback = False
+    pullback_side = "none"
+    if breakout_type in ("A", "C") and abs(dist) < 0.05:
+        pullback = True
+        pullback_side = "buy" if breakout_dir == "up" else "sell"
+    elif breakout_type == "B":
+        pullback = True
+        pullback_side = "buy" if dist >= 0 else "sell"
+
+    # ma_note模板生成
+    type_desc = {
+        "A": "典型突破（向上）" if breakout_dir == "up" else "典型跌破（向下）",
+        "B": "慢速盘整突破（向上）" if breakout_dir == "up" else "慢速盘整跌破（向下）",
+        "C": "突破后回抽确认（向上）" if breakout_dir == "up" else "跌破后反抽确认（向下）",
+        "D": "反向测试MA55未穿越",
+    }.get(breakout_type, "")
+
+    ma_note = f"{alignment_zh}{alignment_bracket}"
+    if breakout_valid and type_desc:
+        ma_note += f"，{breakout_type}类{type_desc}"
+    if overextension:
+        ma_note += "，⚠️价格过度偏离均线"
+
+    return {
+        "ma55_breakout_type":      breakout_type,
+        "ma55_breakout_direction": breakout_dir,
+        "ma55_breakout_valid":     breakout_valid,
+        "pullback_opportunity":    pullback,
+        "pullback_side":           pullback_side,
+        "overextension_warning":   overextension,
+        "ma_note":                 ma_note,
+    }
