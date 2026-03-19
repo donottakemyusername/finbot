@@ -179,6 +179,8 @@ _HEAVY_KEYS = {
     # v2新增：背离原始数据也不再需要Claude处理
     "top_divergence_raw",
     "bot_divergence_raw",
+    # v2+新增：关键K线列表由Python处理，只传 latest_golden_candle 单条
+    "key_candles_last20",
 }
 
 
@@ -258,9 +260,20 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     top_note = hard_signals.get('top_divergence_note_py', '')
     bot_note = hard_signals.get('bot_divergence_note_py', '')
     adj_suff = hard_signals.get('adjustment_sufficient', False)
+
+    # 背离成熟度（Python计算，课程：矛盾激化才有分析价值）
+    top_mat      = hard_signals.get('top_div_maturity', 'none')
+    top_mat_bars = hard_signals.get('top_div_bars_since')
+    bot_mat      = hard_signals.get('bot_div_maturity', 'none')
+    bot_mat_bars = hard_signals.get('bot_div_bars_since')
+    _top_mat_str = (f"，成熟度={top_mat}（距形成{top_mat_bars}根K线）"
+                    if top_div_valid and top_mat not in ("none", "unknown") else "")
+    _bot_mat_str = (f"，成熟度={bot_mat}（距形成{bot_mat_bars}根K线）"
+                    if bot_div_valid and bot_mat not in ("none", "unknown") else "")
+
     div_summary = (
-        f"顶背离：{'✅有效' if top_div_valid else '❌无效'}（{top_note}）\n"
-        f"底背离：{'✅有效' if bot_div_valid else '❌无效'}（{bot_note}）\n"
+        f"顶背离：{'✅有效' if top_div_valid else '❌无效'}（{top_note}）{_top_mat_str}\n"
+        f"底背离：{'✅有效' if bot_div_valid else '❌无效'}（{bot_note}）{_bot_mat_str}\n"
         f"调整充分：{'是' if adj_suff else '否'}"
     )
 
@@ -270,6 +283,29 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     align_zh = hard_signals.get('trend_alignment_zh', '混沌排列')
     align_br = hard_signals.get('trend_alignment_bracket', '')
     ma_summary = f"均线排列：{align_zh}{align_br}，突破类型：{ma_type}类（{ma_dir}）"
+
+    # 结构预判（Python硬计算，Claude验证后输出）
+    struct_type  = hard_signals.get('structure_type_py', 'unknown')
+    struct_stage = hard_signals.get('structure_current_stage_py', 'unknown')
+    struct_conf  = hard_signals.get('structure_confidence_py', 'none')
+    struct_note  = hard_signals.get('structure_note_py', '')
+    struct_d2a   = hard_signals.get('structure_d_to_a_py', False)
+    structure_summary = (
+        f"Python预判结构：{struct_type}类（置信度={struct_conf}，当前第{struct_stage}拐点）\n"
+        f"说明：{struct_note}"
+        + ("\n⚠️ D→A转化信号：第三段已超越第一段×1.5" if struct_d2a else "")
+    )
+
+    # 关键K线（Python检测）
+    golden = hard_signals.get('latest_golden_candle')
+    if golden:
+        _pat   = "阳包阴" if golden.get("pattern") == "bullish_engulfing" else "下影线"
+        _conf  = "已确认（下一根未破低）" if golden.get("confirmed") else "待确认"
+        _vshrk = "缩量✅" if golden.get("vol_shrink") else "非缩量"
+        _nsup  = "（临近支撑位）" if golden.get("near_support") else ""
+        golden_text = f"关键K线（黄金棒）：{_pat}{_nsup}，{_vshrk}，{_conf}"
+    else:
+        golden_text = "关键K线：近期未检测到"
 
     pinned_values = (
         f"支撑={_ks} | 压力={_kr}\n"
@@ -299,6 +335,10 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
 
 {ma_summary}
 
+{structure_summary}
+
+{golden_text}
+
 {pinned_values}
 
 ---
@@ -318,12 +358,19 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
 
 ---
 
-## 结构分类知识（你需要做的唯一模式识别）
+## 结构分类（Python预判已提供，请验证后输出）
 
-A类（五段式）：6个拐点，高低交替，第三段 > 第一段 × 1.5
-B类（双平台）：两个横盘区域，相邻高点差距 < 3%
-C类（单平台）：一个横盘区域，方向未定
-D类（三段式）：4个拐点，第三段决定演化
+Python已根据拐点数量和段幅度预判了结构类型（见"Python预算摘要"）。
+你的任务：① 验证预判是否合理 ② 若有明显不符可调整，须在 structure_note 中说明原因。
+
+规则回顾：
+A类（五段式）：6个拐点，高低交替，第三段 > 第一段 × 1.5（第三段为主升/主跌浪）
+B类（双平台）：多个拐点形成两个横盘区域，相邻同向拐点差 < 3%
+C类（单平台）：一个横盘区域，方向未定（常见于中性偏强/中性偏弱阶段）
+D类（三段式）：4个拐点，第三段决定后续演化方向（D4是重要决策点）
+→ D→A转化：若 d_to_a_py=True，第五段方向与第一段相同概率高
+
+⚠️ 默认使用 Python预判的 pattern_type，除非拐点序列明显支持其他分类。
 
 ---
 

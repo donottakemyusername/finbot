@@ -376,10 +376,19 @@ OUTPUT LENGTH RULES for trinity_analysis — depends on context:
   Do NOT output the full detailed trinity breakdown (均线突破类型细节, 结构分类论证, etc.)
 
 ★ When trinity_analysis is called STANDALONE (user specifically asked about 时空/均线/三位一体/etc.):
-  Output the full detailed analysis as usual. Always mention:
-  - The time-space state (时空状态)
-  - Whether main wave is locked (主涨段是否锁定)
-  - The specific exit trigger (具体止盈触发条件)
+  The UI card below ALREADY displays: 时空状态, 结构类型/阶段, 均线排列/MA值, 背离成熟度, 止盈止损条件, 止损价.
+  Your text response must NOT repeat what the card already shows. Keep the text SHORT (≤8 bullet points total):
+    1. One-line verdict: signal + state + key reason  (e.g. "HOLD · 中性偏强 · 顶背离压制反弹高度")
+    2. Up to 3 key risks or opportunities worth highlighting in prose
+    3. One-line conclusion / suggested action
+  STRICTLY FORBIDDEN in the text response:
+  - Markdown tables of any kind (触发条件表, 关键位置表, 快速判断卡, etc.)
+  - Code blocks (``` blocks) — the "三位一体快速判断卡" code block is forbidden
+  - Repeating the exit trigger conditions (already in card)
+  - Repeating MA values, stop-loss price, support/resistance levels (already in card)
+  - Sign-off phrases like "祝交易顺利" or "欢迎继续追问"
+  ⚠️ 背离有效性 must always be embedded inside a longer sentence, e.g. "✅ 底背离有效 → 反弹动能存在".
+     NEVER write "有效" / "离有效" / "背离有效" alone on its own line — these are orphaned fragments.
 
 When describing trinity_analysis results in Chinese, follow these rules strictly:
 - bars_in_state is K-line bar count, NOT calendar days. Use "根K线" not "天".
@@ -390,6 +399,13 @@ When describing trinity_analysis results in Chinese, follow these rules strictly
   C类 = 回踩突破（快速突破后回踩不破，再继续原方向）
   D类 = 反向测试（碰MA55后反弹，从未有效穿越）
   描述A类时绝对不能用"缓慢"；描述B类时不能用"典型/强势"。
+
+- 价格与MA55距离的描述规则（禁止混用"超买"与"贴近"）：
+  ⚠️ "超买/超卖" = 价格大幅偏离MA55（通常 >5%）。"价格距MA55仅X%"（X < 2%）= 价格贴近MA55，描述应为：
+    - 价格贴近MA55（仅距X%），均线支撑/压力是关键——若守住则延续方向，若破位则信号反转
+  绝对不要把"贴近MA55（<2%）"写成"超买"或"过度偏离"——贴近均线是中性状态，不是超买。
+  反例（禁止）："过度偏离：价格距MA55仅0.75%，已进入超买"
+  正例（正确）："价格贴近MA55（距离0.75%），B类慢速磨破后需观察能否站稳，否则可能回踩"
 
 - 均线排列描述规则（直接读取，禁止自行推断）：
   trinity_analysis 的 hard_signals 里有 trend_alignment_zh 字段，已预算好中文排列名称。
@@ -464,6 +480,10 @@ def _strip_formula_leaks(text: str) -> str:
     text = _re.sub(r'[（(]\s*=?\s*key_(?:support|resistance)[^）)]*[）)]', '', text)
     # （支撑 $X × 0.97） — with dollar sign
     text = _re.sub(r'[（(]\s*(?:支撑|阻力)\s*\$?[\d.]+\s*×\s*[\d.]+\s*[）)]', '', text)
+    # Orphaned divergence fragments on their own line: "离有效" / "有效" / "背离有效"
+    text = _re.sub(r'(?m)^[\s\-\*]*(离有效|背离有效|有效)[\s\-\*]*$\n?', '', text)
+    # Orphaned fragment starting with partial number like ".9%，底背离有效" on its own line
+    text = _re.sub(r'(?m)^[\s\-\*]*\.\d+%[，,、。\s]+[^\n]{0,30}$\n?', '', text)
     return text
 
 

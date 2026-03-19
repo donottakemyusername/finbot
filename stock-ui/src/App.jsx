@@ -190,14 +190,78 @@ function TrinityMacdChart({ chartData }) {
   );
 }
 
+// ─── helpers ──────────────────────────────────────────────────────────────────
+const labelToStateColor = (label) => {
+  if (!label || label === "未知") return STATE_COLORS.unknown;
+  if (label.includes("极强")) return STATE_COLORS.extreme_strong;
+  if (label.includes("中性偏强")) return STATE_COLORS.mid_strong;
+  if (label.includes("强"))   return STATE_COLORS.strong;
+  if (label.includes("极弱")) return STATE_COLORS.extreme_weak;
+  if (label.includes("中性偏弱")) return STATE_COLORS.mid_weak;
+  if (label.includes("弱"))   return STATE_COLORS.weak;
+  return STATE_COLORS.unknown;
+};
+
+const POS_SIZE_CONFIG = {
+  heavy:  { label: "重仓", pct: 90, color: "bg-emerald-400" },
+  medium: { label: "中仓", pct: 60, color: "bg-amber-400"   },
+  light:  { label: "轻仓", pct: 30, color: "bg-orange-400"  },
+  none:   { label: "观望", pct:  5, color: "bg-white/20"    },
+};
+
 // ─── Trinity: 主卡片 ──────────────────────────────────────────────────────────
+const MATURITY_LABEL = {
+  forming:      { text: "初期（<3根K线，谨慎）",     color: "text-orange-400", dot: "bg-orange-400" },
+  intensifying: { text: "激化中（矛盾加剧）",          color: "text-yellow-400", dot: "bg-yellow-400" },
+  mature:       { text: "成熟（信号有效）",            color: "text-emerald-400", dot: "bg-emerald-400" },
+};
+const BREAKOUT_DESC = { A: "典型突破", B: "慢速/盘整突破", C: "突破后回抽", D: "反向测试" };
+
 function TrinityCard({ data }) {
+  const [activeTab, setActiveTab] = useState("时空");
   if (!data?.summary) return null;
   const s   = data.summary;
   const sc_ = sc(s.signal);
   const st  = stateColor(s.state_code);
   const verdictKey = (s.signal || "hold").toUpperCase().replace("_", "_");
   const cfg = VERDICT_CONFIG[verdictKey] || VERDICT_CONFIG.HOLD;
+
+  const hasDivergence = s.divergence_type && s.divergence_type !== "none";
+  const tabs = ["时空", "结构", "均线", "技术", ...(hasDivergence ? ["背离"] : [])];
+
+  // Last bar for technical tab
+  const lastBar   = data.price_chart_data?.slice(-1)[0];
+  const bbPct     = (lastBar?.bb_upper && lastBar?.bb_lower && lastBar?.bb_upper !== lastBar?.bb_lower)
+    ? Math.round(((lastBar.close - lastBar.bb_lower) / (lastBar.bb_upper - lastBar.bb_lower)) * 100)
+    : null;
+  const posCfg    = POS_SIZE_CONFIG[s.position_size] || POS_SIZE_CONFIG.light;
+
+  // Multi-timeframe states for 时空 tab
+  const monthlyLabel = data.time_space_state?.monthly_state?.state_label || "数据不足";
+  const weeklyC  = labelToStateColor(s.weekly_state_label);
+  const monthlyC = labelToStateColor(monthlyLabel);
+
+  const isTop = s.divergence_type?.includes("top");
+  const maturity = isTop ? s.top_div_maturity : s.bot_div_maturity;
+  const matLabel = MATURITY_LABEL[maturity];
+
+  // Resolve structure type: prefer Claude output, fallback to Python classifier
+  const rawType = s.pattern_type && s.pattern_type !== "unknown" ? s.pattern_type : s.structure_type_py;
+  const structureType = rawType?.toUpperCase() || null;
+  const STRUCT_DESC = { A: "五段式", B: "双平台", C: "单平台", D: "三段式" };
+  // Resolve current stage: prefer Claude, fallback to Python
+  const currentStage = (s.current_stage && s.current_stage !== "unknown") ? s.current_stage : s.structure_stage_py;
+
+  const isShort = s.signal === "sell";
+  const r1l = s.reduce_1st_long || s.reduce_1st;
+  const r2l = s.reduce_2nd_long || s.reduce_2nd;
+  const r1s = s.reduce_1st_short;
+  const r2s = s.reduce_2nd_short;
+
+  // Distance from current price to MA55
+  const ma55Dist = s.current_price && s.ma55
+    ? (((+s.current_price - +s.ma55) / +s.ma55) * 100).toFixed(1)
+    : null;
 
   return (
     <div className="space-y-3">
@@ -248,146 +312,337 @@ function TrinityCard({ data }) {
         </>
       )}
 
-      {/* ── 三维度状态面板 ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        {/* 时空 */}
-        <Section title="时空状态">
-          <div className={`rounded-lg px-3 py-2 border ${st.border} ${st.bg}`}>
-            <p className={`font-bold text-sm ${st.text}`}>{st.label}</p>
-            <p className="text-white/40 text-xs mt-1">结构预期：{s.first_assumption || "—"}</p>
-          </div>
-          {s.main_wave_note && (
-            <p className="text-white/50 text-xs leading-relaxed">{s.main_wave_note}</p>
-          )}
-        </Section>
+      {/* ── 三维度 Tabs ── */}
+      <div className="bg-white/4 border border-white/8 rounded-xl overflow-hidden">
+        {/* Tab bar */}
+        <div className="flex border-b border-white/8">
+          {tabs.map(tab => {
+            const isActive = activeTab === tab;
+            // badge for divergence tab
+            const badge = tab === "背离" && hasDivergence;
+            return (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex-1 py-2.5 text-xs font-semibold transition-all relative
+                  ${isActive
+                    ? "text-white bg-white/8"
+                    : "text-white/35 hover:text-white/60 hover:bg-white/4"
+                  }`}
+              >
+                {tab}
+                {badge && (
+                  <span className={`ml-1 inline-block w-1.5 h-1.5 rounded-full align-middle -mt-0.5 ${isTop ? "bg-red-400" : "bg-emerald-400"}`} />
+                )}
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/50 rounded-t" />
+                )}
+              </button>
+            );
+          })}
+        </div>
 
-        {/* 结构 */}
-        <Section title="结构分析">
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs">
-              <span className="text-white/40">类型</span>
-              <span className="text-white font-semibold">{s.pattern_type?.toUpperCase() || "—"} 类</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-white/40">当前阶段</span>
-              <span className="text-white font-semibold">第 {s.current_stage || "?"} 笔</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-white/40">下一步</span>
-              <span className={s.likely_next === "up" ? "text-emerald-400" : s.likely_next === "down" ? "text-red-400" : "text-amber-400"}>
-                {s.likely_next === "up" ? "↑ 上涨" : s.likely_next === "down" ? "↓ 下跌" : "→ 震荡"}
-              </span>
-            </div>
-          </div>
-        </Section>
+        {/* Tab content */}
+        <div className="p-3 sm:p-4">
 
-        {/* 均线 */}
-        <Section title="均线状态">
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs">
-              <span className="text-white/40">排列</span>
-              <span className={s.trend_alignment === "bullish" ? "text-emerald-400" : s.trend_alignment === "bearish" ? "text-red-400" : "text-amber-400"}>
-                {s.trend_alignment === "bullish" ? "多头排列 ↑" : s.trend_alignment === "bearish" ? "空头排列 ↓" : "混沌排列"}
-              </span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-white/40">MA55</span>
-              <span className="text-yellow-400 font-mono">${s.ma55?.toFixed(2) || "—"}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-white/40">MA233</span>
-              <span className="text-blue-400 font-mono">${s.ma233?.toFixed(2) || "—"}</span>
-            </div>
-            {s.ma_breakout_type && s.ma_breakout_type !== "none" && (
-              <div className="flex justify-between text-xs">
-                <span className="text-white/40">突破类型</span>
-                <span className="text-purple-400">{s.ma_breakout_type} 类</span>
+          {/* ─ 时空 ─ */}
+          {activeTab === "时空" && (
+            <div className="space-y-3">
+              {/* Multi-timeframe grid */}
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: "日线", c: st,       stateLabel: st.label,            bars: s.bars_in_state },
+                  { label: "周线", c: weeklyC,  stateLabel: s.weekly_state_label || "未知", bars: null },
+                  { label: "月线", c: monthlyC, stateLabel: monthlyLabel,        bars: null },
+                ].map(({ label, c, stateLabel, bars }) => (
+                  <div key={label} className={`rounded-xl border ${c.border} ${c.bg} px-2.5 py-2.5 text-center`}>
+                    <p className="text-white/35 text-xs mb-1">{label}</p>
+                    <p className={`text-xs font-bold leading-tight ${c.text}`}>{stateLabel}</p>
+                    {bars > 0 && <p className="text-white/25 text-xs mt-0.5">{bars}根</p>}
+                  </div>
+                ))}
               </div>
-            )}
-          </div>
-        </Section>
+
+              {/* State anomaly note */}
+              {s.state_anomaly && (
+                <div className="flex items-start gap-2 bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2 text-xs">
+                  <span className="text-amber-400 flex-shrink-0">⚡</span>
+                  <span className="text-amber-300/80">状态发生回落，动能钝化，留意上升持续性</span>
+                </div>
+              )}
+
+              {/* MTF conflict */}
+              {s.multi_timeframe_conflict && (
+                <div className="flex items-start gap-2 bg-red-500/8 border border-red-500/20 rounded-lg px-3 py-2 text-xs">
+                  <span className="text-red-400 flex-shrink-0">⚠️</span>
+                  <span className="text-red-300/80">多级别冲突：{s.mtf_conflict_type || "日强周弱"}</span>
+                </div>
+              )}
+
+              {/* Main wave + first assumption */}
+              <div className="flex items-center justify-between">
+                {s.main_wave_locked
+                  ? <span className="text-emerald-300 text-xs font-semibold bg-emerald-500/20 border border-emerald-500/30 rounded-lg px-2.5 py-1">🔒 主涨段锁定</span>
+                  : <span className="text-white/30 text-xs bg-white/5 border border-white/10 rounded-lg px-2.5 py-1">主涨段未启动</span>
+                }
+                {s.first_assumption && (
+                  <span className="text-white/40 text-xs text-right max-w-[55%] leading-tight">{s.first_assumption}</span>
+                )}
+              </div>
+
+              {s.main_wave_note && (
+                <p className="text-white/40 text-xs leading-relaxed">{s.main_wave_note}</p>
+              )}
+            </div>
+          )}
+
+          {/* ─ 结构 ─ */}
+          {activeTab === "结构" && (
+            <div className="space-y-3">
+              {/* Type + stage hero */}
+              <div className="flex gap-3">
+                <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-center">
+                  <p className="text-white/40 text-xs mb-1">结构类型</p>
+                  {structureType
+                    ? <>
+                        <p className="text-white text-xl font-black">{structureType} 类</p>
+                        <p className="text-white/30 text-xs mt-0.5">{STRUCT_DESC[structureType] || "整理中"}</p>
+                      </>
+                    : <p className="text-white/30 text-sm mt-1">分析中…</p>
+                  }
+                </div>
+                <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-center">
+                  <p className="text-white/40 text-xs mb-1">当前阶段</p>
+                  {currentStage
+                    ? <p className="text-white text-xl font-black">第 {currentStage} 笔</p>
+                    : <p className="text-white/30 text-sm mt-1">待确认</p>
+                  }
+                  <p className={`text-xs mt-0.5 font-semibold
+                    ${s.likely_next === "up" ? "text-emerald-400" : s.likely_next === "down" ? "text-red-400" : "text-amber-400"}`}>
+                    {s.likely_next === "up" ? "↑ 下一步：上涨" : s.likely_next === "down" ? "↓ 下一步：下跌" : "→ 震荡整理"}
+                  </p>
+                </div>
+              </div>
+              {/* Key levels */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {s.key_support && (
+                  <div className="bg-emerald-500/8 border border-emerald-500/20 rounded-lg px-3 py-2">
+                    <p className="text-emerald-400/60 mb-0.5">支撑位</p>
+                    <p className="text-emerald-300 font-mono font-bold">${(+s.key_support).toFixed(2)}</p>
+                  </div>
+                )}
+                {s.key_resistance && (
+                  <div className="bg-red-500/8 border border-red-500/20 rounded-lg px-3 py-2">
+                    <p className="text-red-400/60 mb-0.5">压力位</p>
+                    <p className="text-red-300 font-mono font-bold">${(+s.key_resistance).toFixed(2)}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ─ 均线 ─ */}
+          {activeTab === "均线" && (
+            <div className="space-y-3">
+              {/* Alignment hero */}
+              <div className={`rounded-xl px-4 py-3 border flex items-center justify-between
+                ${s.trend_alignment === "bullish" ? "bg-emerald-500/10 border-emerald-500/30"
+                  : s.trend_alignment === "bearish" ? "bg-red-500/10 border-red-500/30"
+                  : "bg-amber-500/10 border-amber-500/30"}`}>
+                <div>
+                  <p className={`text-base font-bold
+                    ${s.trend_alignment === "bullish" ? "text-emerald-400"
+                      : s.trend_alignment === "bearish" ? "text-red-400"
+                      : "text-amber-400"}`}>
+                    {s.trend_alignment === "bullish" ? "多头排列 ↑"
+                      : s.trend_alignment === "bearish" ? "空头排列 ↓"
+                      : "混沌排列 ↔"}
+                  </p>
+                  <p className="text-white/40 text-xs mt-0.5">
+                    {s.trend_alignment === "bullish" ? "价格 > MA55 > MA233"
+                      : s.trend_alignment === "bearish" ? "价格 < MA55 < MA233"
+                      : "均线尚未形成方向"}
+                  </p>
+                </div>
+                {s.ma_breakout_type && s.ma_breakout_type !== "none" && (
+                  <div className="text-right">
+                    <p className="text-purple-300 text-xs font-bold">{s.ma_breakout_type} 类突破</p>
+                    <p className="text-white/30 text-xs">{BREAKOUT_DESC[s.ma_breakout_type] || ""}</p>
+                  </div>
+                )}
+              </div>
+              {/* MA values */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-yellow-400/8 border border-yellow-400/20 rounded-lg px-3 py-2">
+                  <p className="text-yellow-400/60 mb-0.5">MA55</p>
+                  <p className="text-yellow-300 font-mono font-bold">${s.ma55?.toFixed(2) || "—"}</p>
+                  {ma55Dist !== null && (
+                    <p className={`text-xs mt-0.5 ${+ma55Dist >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                      {+ma55Dist >= 0 ? "+" : ""}{ma55Dist}% 距离
+                    </p>
+                  )}
+                </div>
+                <div className="bg-blue-400/8 border border-blue-400/20 rounded-lg px-3 py-2">
+                  <p className="text-blue-400/60 mb-0.5">MA233</p>
+                  <p className="text-blue-300 font-mono font-bold">${s.ma233?.toFixed(2) || "—"}</p>
+                  <p className="text-white/20 text-xs mt-0.5">长期均线</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─ 技术 ─ */}
+          {activeTab === "技术" && (
+            <div className="space-y-3">
+              {/* Bollinger Band position gauge */}
+              {bbPct !== null && (
+                <div>
+                  <div className="flex justify-between text-xs mb-1.5">
+                    <span className="text-white/40">布林带位置</span>
+                    <span className={`font-semibold ${bbPct > 80 ? "text-red-400" : bbPct < 20 ? "text-emerald-400" : "text-white/70"}`}>
+                      {bbPct}%
+                      {bbPct > 80 ? " · 接近上轨" : bbPct < 20 ? " · 接近下轨" : " · 中间区域"}
+                    </span>
+                  </div>
+                  <div className="relative h-3 bg-white/8 rounded-full overflow-hidden">
+                    {/* gradient band: lower=green, mid=neutral, upper=red */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/40 via-white/10 to-red-500/40 rounded-full" />
+                    {/* position marker */}
+                    <div
+                      className="absolute top-0.5 bottom-0.5 w-2 bg-white rounded-full shadow-lg transition-all"
+                      style={{ left: `calc(${Math.min(Math.max(bbPct, 2), 98)}% - 4px)` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-white/20 mt-1">
+                    <span>下轨 ${lastBar?.bb_lower?.toFixed(2)}</span>
+                    <span>中轨 ${lastBar?.bb_mid?.toFixed(2)}</span>
+                    <span>上轨 ${lastBar?.bb_upper?.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* MACD current values */}
+              {lastBar?.dif != null && (
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {[
+                    { label: "DIF", val: lastBar.dif,      color: "text-white/80" },
+                    { label: "DEA", val: lastBar.dea,      color: "text-yellow-400" },
+                    { label: "柱", val: lastBar.macd_bar,  color: lastBar.macd_bar >= 0 ? "text-emerald-400" : "text-red-400" },
+                  ].map(({ label, val, color }) => (
+                    <div key={label} className="bg-white/5 border border-white/8 rounded-lg px-2.5 py-2 text-center">
+                      <p className="text-white/30 text-xs mb-0.5">{label}</p>
+                      <p className={`font-mono font-semibold ${color}`}>{val?.toFixed(2)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Position size recommendation */}
+              <div>
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="text-white/40">建议仓位</span>
+                  <span className={`font-semibold ${posCfg.color.replace("bg-", "text-")}`}>{posCfg.label}</span>
+                </div>
+                <div className="h-2 bg-white/8 rounded-full overflow-hidden">
+                  <div className={`h-full ${posCfg.color} rounded-full transition-all`} style={{ width: `${posCfg.pct}%` }} />
+                </div>
+              </div>
+
+              {/* Pullback opportunity */}
+              {s.pullback_opportunity && (
+                <div className="flex items-center gap-2 bg-emerald-500/8 border border-emerald-500/20 rounded-lg px-3 py-2 text-xs">
+                  <span className="text-emerald-400">✓</span>
+                  <span className="text-emerald-300/80">回踩MA55机会 — 右侧入场信号</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ─ 背离 ─ */}
+          {activeTab === "背离" && hasDivergence && (
+            <div className="space-y-3">
+              <div className={`rounded-xl px-4 py-3 border flex items-center gap-3
+                ${isTop ? "bg-red-500/10 border-red-500/30" : "bg-emerald-500/10 border-emerald-500/30"}`}>
+                <span className="text-2xl">{isTop ? "📉" : "📈"}</span>
+                <div className="flex-1">
+                  <p className={`text-base font-bold ${isTop ? "text-red-400" : "text-emerald-400"}`}>
+                    {isTop ? "顶背离" : "底背离"}
+                    <span className="text-white/40 font-normal ml-2 text-xs">({s.divergence_strength})</span>
+                  </p>
+                  <p className="text-white/50 text-xs mt-0.5 leading-relaxed">
+                    {s.divergence_note || (isTop ? "MACD动能衰竭，注意拐点风险" : "MACD动能收缩，可能出现反弹")}
+                  </p>
+                </div>
+              </div>
+              {matLabel && (
+                <div className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2.5">
+                  <span className="text-white/40 text-xs">成熟度</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${matLabel.dot}`} />
+                    <span className={`text-xs font-semibold ${matLabel.color}`}>{matLabel.text}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+        </div>
       </div>
 
-      {/* ── 背离 ── */}
-      {s.divergence_type && s.divergence_type !== "none" && (
-        <Section title="背离信号">
-          <div className={`flex items-center gap-3 rounded-lg px-3 py-2 border ${s.divergence_type?.includes("top") ? "border-red-500/40 bg-red-500/10" : "border-emerald-500/40 bg-emerald-500/10"}`}>
-            <span className="text-xl">{s.divergence_type?.includes("top") ? "📉" : "📈"}</span>
-            <div>
-              <p className={`text-sm font-bold ${s.divergence_type?.includes("top") ? "text-red-400" : "text-emerald-400"}`}>
-                {s.divergence_type?.includes("top") ? "顶背离" : "底背离"}
-                <span className="text-white/40 font-normal ml-1 text-xs">({s.divergence_strength})</span>
-              </p>
-              <p className="text-white/50 text-xs">
-                {s.divergence_note
-                  ? s.divergence_note
-                  : s.divergence_type?.includes("top")
-                    ? "MACD动能衰竭，注意拐点风险"
-                    : "MACD动能收缩，可能出现反弹"}
-              </p>
+      {/* ── 止盈止损策略 ── */}
+      <div className="bg-white/4 border border-white/8 rounded-xl overflow-hidden">
+        <div className="px-3 sm:px-4 py-2 border-b border-white/8">
+          <p className="text-white/50 text-xs font-semibold uppercase tracking-wider">止盈止损策略</p>
+        </div>
+        <div className="px-3 sm:px-4 py-3 space-y-2">
+          {s.main_wave_locked ? (
+            <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+              <p className="text-emerald-400 text-xs font-semibold mb-1">🔒 主涨段锁定模式</p>
+              <p className="text-white/60 text-xs">止盈触发：{s.exit_trigger}</p>
+              <p className="text-white/40 text-xs mt-1">锁定期间忽略：顶背离、结构前高、小级别MACD信号</p>
             </div>
-          </div>
-        </Section>
-      )}
+          ) : (<>
+            {!isShort && r1l && (
+              <div className="flex items-start gap-3 text-xs">
+                <span className="text-amber-400 font-bold flex-shrink-0 w-16">减仓①</span>
+                <span className="text-white/60 leading-relaxed">{r1l}</span>
+              </div>
+            )}
+            {!isShort && r2l && (
+              <div className="flex items-start gap-3 text-xs">
+                <span className="text-red-400 font-bold flex-shrink-0 w-16">减仓②</span>
+                <span className="text-white/60 leading-relaxed">{r2l}</span>
+              </div>
+            )}
+            {isShort && r1s && (
+              <div className="flex items-start gap-3 text-xs">
+                <span className="text-sky-400 font-bold flex-shrink-0 w-16">平空①</span>
+                <span className="text-white/60 leading-relaxed">{r1s}</span>
+              </div>
+            )}
+            {isShort && r2s && (
+              <div className="flex items-start gap-3 text-xs">
+                <span className="text-blue-400 font-bold flex-shrink-0 w-16">平空②</span>
+                <span className="text-white/60 leading-relaxed">{r2s}</span>
+              </div>
+            )}
+            {!r1l && !r1s && s.exit_trigger && (
+              <p className="text-white/60 text-xs">止盈触发：{s.exit_trigger}</p>
+            )}
+            {s.long_stop_loss && (
+              <div className="flex items-center justify-between pt-1 border-t border-white/8 text-xs">
+                <span className="text-white/30">止损价</span>
+                <span className="text-red-400 font-mono font-bold">${(+s.long_stop_loss).toFixed(2)}</span>
+              </div>
+            )}
+          </>)}
+          {s.holding_constraint && (
+            <p className="text-orange-400 text-xs border-t border-white/8 pt-2">{s.holding_constraint}</p>
+          )}
+        </div>
+      </div>
 
-      {/* ── 止盈建议 ── */}
-      <Section title="止盈止损策略">
-        {s.main_wave_locked ? (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-            <p className="text-emerald-400 text-xs font-semibold mb-1">🔒 主涨段锁定模式</p>
-            <p className="text-white/60 text-xs">止盈触发条件：{s.exit_trigger}</p>
-            <p className="text-white/40 text-xs mt-1">锁定期间忽略：顶背离、结构前高、小级别MACD信号</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {(() => {
-              // signal="sell" → 只显示空头平仓; signal="buy" → 只显示多头减仓; "hold" → 两套都显示
-              const isShort = s.signal === "sell";
-              const isLong  = s.signal === "buy";
-              const showLong  = isLong  || (!isShort);
-              const showShort = isShort || (!isLong);
-              const r1l = s.reduce_1st_long  || s.reduce_1st;
-              const r2l = s.reduce_2nd_long  || s.reduce_2nd;
-              const r1s = s.reduce_1st_short;
-              const r2s = s.reduce_2nd_short;
-              return (<>
-                {showLong && r1l && (
-                  <div className="flex gap-2 text-xs">
-                    <span className="text-amber-400 font-bold flex-shrink-0">多头减仓①</span>
-                    <span className="text-white/60">{r1l}</span>
-                  </div>
-                )}
-                {showLong && r2l && (
-                  <div className="flex gap-2 text-xs">
-                    <span className="text-red-400 font-bold flex-shrink-0">多头减仓②</span>
-                    <span className="text-white/60">{r2l}</span>
-                  </div>
-                )}
-                {showShort && r1s && (
-                  <div className="flex gap-2 text-xs">
-                    <span className="text-sky-400 font-bold flex-shrink-0">空头平仓①</span>
-                    <span className="text-white/60">{r1s}</span>
-                  </div>
-                )}
-                {showShort && r2s && (
-                  <div className="flex gap-2 text-xs">
-                    <span className="text-blue-400 font-bold flex-shrink-0">空头平仓②</span>
-                    <span className="text-white/60">{r2s}</span>
-                  </div>
-                )}
-                {!r1l && !r1s && s.exit_trigger && (
-                  <p className="text-white/60 text-xs">止盈触发：{s.exit_trigger}</p>
-                )}
-              </>);
-            })()}
-          </div>
-        )}
-        {s.holding_constraint && (
-          <p className="text-orange-400 text-xs border-t border-white/8 pt-2">{s.holding_constraint}</p>
-        )}
-      </Section>
-
-      {/* ── 入场建议 ── */}
+      {/* ── 入场方向 ── */}
       <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 border ${sc_.border} ${sc_.bg}`}>
         <span className={`text-lg font-black ${sc_.text}`}>{sc_.hex === "#10b981" ? "↑" : sc_.hex === "#ef4444" ? "↓" : "→"}</span>
         <div>
@@ -755,7 +1010,15 @@ function MDText({ text }) {
 
 // ─── Message bubble ───────────────────────────────────────────────────────────
 function Bubble({ msg }) {
-  const isUser = msg.role === "user";
+  const isUser     = msg.role === "user";
+  const hasTrinity = !!msg.tool_data?.trinity_analysis;
+  const [expanded, setExpanded] = useState(!hasTrinity);
+
+  const nonEmptyLines = (msg.content || "").split("\n").filter(l => l.trim());
+  const PREVIEW_LINES = 3;
+  const needsToggle   = hasTrinity && nonEmptyLines.length > PREVIEW_LINES;
+  const displayText   = expanded ? msg.content : nonEmptyLines.slice(0, PREVIEW_LINES).join("\n");
+
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} gap-2 sm:gap-3`}>
       {!isUser && (
@@ -776,7 +1039,22 @@ function Bubble({ msg }) {
             ? "bg-blue-600 text-white rounded-tr-sm max-w-fit"
             : "bg-white/8 border border-white/10 text-white/85 rounded-tl-sm"
         }`}>
-          {isUser ? msg.content : <MDText text={msg.content} />}
+          {isUser ? msg.content : (
+            <>
+              <MDText text={displayText} />
+              {needsToggle && (
+                <button
+                  onClick={() => setExpanded(e => !e)}
+                  className="mt-2 flex items-center gap-1 text-xs text-white/35 hover:text-white/65 transition-colors"
+                >
+                  {expanded
+                    ? <><span>收起</span><span className="text-[10px]">▲</span></>
+                    : <><span>展开完整分析</span><span className="text-white/25 ml-1">（{nonEmptyLines.length} 行）</span><span className="text-[10px]">▾</span></>
+                  }
+                </button>
+              )}
+            </>
+          )}
         </div>
         {msg.tool_calls?.map((toolName, i) => {
           const d = msg.tool_data?.[toolName];
@@ -839,18 +1117,45 @@ export default function App() {
     setInput("");
     setMessages(p => [...p, { role: "user", content: msg }]);
     setLoading(true);
-    try {
+
+    const doFetch = async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 180000); // 3min for trinity
-      const res  = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, session_id: sessionId }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      try {
+        const res = await fetch(`${API_BASE}/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg, session_id: sessionId }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch (e) {
+        clearTimeout(timeout);
+        throw e;
+      }
+    };
+
+    try {
+      let data;
+      try {
+        data = await doFetch();
+      } catch (e) {
+        // Cold start: Railway server waking up — retry once after 15s
+        if (e.message === "Failed to fetch" || e.name === "TypeError") {
+          setMessages(p => [...p, {
+            role: "assistant",
+            content: "⏳ 服务器冷启动中，15秒后自动重试...",
+            _retrying: true,
+          }]);
+          await new Promise(r => setTimeout(r, 15000));
+          setMessages(p => p.filter(m => !m._retrying));
+          data = await doFetch();
+        } else {
+          throw e;
+        }
+      }
       setMessages(p => [...p, {
         role: "assistant",
         content:    data.response,
@@ -861,6 +1166,7 @@ export default function App() {
       const errMsg = e.name === "AbortError"
         ? "⚠️ **Request timed out.** Trinity analysis can take 2-3 minutes — please try again."
         : `⚠️ **Error:** ${e.message}`;
+      setMessages(p => p.filter(m => !m._retrying));
       setMessages(p => [...p, { role: "assistant", content: errMsg }]);
     } finally {
       setLoading(false);

@@ -337,6 +337,9 @@ def compute_turning_points_and_divergence(df: pd.DataFrame) -> dict:
         "bot_divergence_note_py":    _bot_note(),
         "turning_points":            turning_points,
         "recent_30_closes":          [round(float(x), 4) for x in closes[-30:]],
+        # 背离形成时第二拐点的K线索引，供 compute_divergence_maturity 计算成熟度
+        "top_div_peak2_bar":   int(last_peaks[1])   if len(last_peaks)   >= 2 else None,
+        "bot_div_trough2_bar": int(last_troughs[1]) if len(last_troughs) >= 2 else None,
     }
 
 
@@ -443,13 +446,20 @@ def compute_structural_levels(df: pd.DataFrame, div_result: dict) -> dict:
 
 
 def compute_all_hard_signals(df: pd.DataFrame) -> dict:
-    ma     = compute_ma_signals(df)
-    macd   = compute_macd_signals(df)
-    bb     = compute_bollinger_trinity(df)
-    div    = compute_turning_points_and_divergence(df)
-    levels = compute_structural_levels(df, div)
+    ma       = compute_ma_signals(df)
+    macd     = compute_macd_signals(df)
+    bb       = compute_bollinger_trinity(df)
+    div      = compute_turning_points_and_divergence(df)
+    levels   = compute_structural_levels(df, div)
     breakout = compute_ma_breakout_type(ma)
-    combined = {**ma, **macd, **bb, **div, **levels, **breakout}
+
+    # Python硬判断：结构分类 + 背离成熟度 + 关键K线
+    struct_cls   = compute_structure_classification(div.get("turning_points", []), len(df))
+    div_maturity = compute_divergence_maturity(len(df), div)
+    key_candles  = detect_key_candles(df, levels.get("key_support"))
+
+    combined = {**ma, **macd, **bb, **div, **levels, **breakout,
+                **struct_cls, **div_maturity, **key_candles}
 
     # 课程硬规则：调整不充分时底背离无效
     if not combined.get("adjustment_sufficient", False):
@@ -613,4 +623,246 @@ def compute_ma_analysis_summary(hard_signals: dict) -> dict:
         "pullback_side":           pullback_side,
         "overextension_warning":   overextension,
         "ma_note":                 ma_note,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 新增：结构分类 / 背离成熟度 / 关键K线（v2+）
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _enforce_alternation(turning_points: list[dict]) -> list[dict]:
+    """确保拐点序列严格高低交替；同类型相邻时保留最极端值。"""
+    if not turning_points:
+        return []
+    clean = [turning_points[0].copy()]
+    for tp in turning_points[1:]:
+        if tp["type"] == clean[-1]["type"]:
+            if tp["type"] == "peak" and tp["price"] > clean[-1]["price"]:
+                clean[-1] = tp.copy()
+            elif tp["type"] == "trough" and tp["price"] < clean[-1]["price"]:
+                clean[-1] = tp.copy()
+        else:
+            clean.append(tp.copy())
+    return clean
+
+
+def compute_structure_classification(turning_points: list[dict], n_bars: int) -> dict:
+    """
+    Python硬判断结构分类（ABCD）。
+
+    A类（五段式）：≥6个拐点，第三段幅度 > 第一段 × 1.5
+    B类（双平台）：相邻同向拐点价格差 < 3%（双高或双低）
+    C类（单平台）：拐点不足或不满足A/B条件的过渡结构
+    D类（三段式）：恰好4个拐点；若第三段>第一段×1.5则 d_to_a_py=True
+
+    文档原则：D4之后最有可能转化为A5，第三段超越第一段×1.5是关键判据。
+    """
+    clean = _enforce_alternation(turning_points)
+    n = len(clean)
+
+    if n < 2:
+        return {
+            "structure_type_py":          "unknown",
+            "structure_current_stage_py": "unknown",
+            "structure_confidence_py":    "none",
+            "structure_d_to_a_py":        False,
+            "structure_note_py":          "拐点不足，无法判断结构",
+        }
+
+    # 各段幅度（绝对价格距离，方向无关）
+    segments = [abs(clean[i]["price"] - clean[i - 1]["price"]) for i in range(1, n)]
+    seg1 = segments[0] if len(segments) >= 1 else 0.0
+    seg3 = segments[2] if len(segments) >= 3 else 0.0
+
+    # 当前处于第几拐点（即已形成n个拐点，正在运行第n+1段）
+    current_stage = str(n)
+
+    # ── D类：恰好4个拐点 ──────────────────────────────────────────────────
+    if n == 4:
+        d_to_a = bool(seg1 > 0 and seg3 > seg1 * 1.5)
+        return {
+            "structure_type_py":          "D",
+            "structure_current_stage_py": current_stage,
+            "structure_confidence_py":    "high",
+            "structure_d_to_a_py":        d_to_a,
+            "structure_note_py": (
+                f"D4已现，第三段({seg3:.2f})>第一段({seg1:.2f})×1.5，D→A转化形成中"
+                if d_to_a else
+                f"D类三段式，第四拐点位，等待第五段方向确认"
+            ),
+        }
+
+    # ── A类（确认）：≥6个拐点且第三段>第一段×1.5 ────────────────────────
+    if n >= 6 and seg1 > 0 and seg3 > seg1 * 1.5:
+        return {
+            "structure_type_py":          "A",
+            "structure_current_stage_py": current_stage,
+            "structure_confidence_py":    "high",
+            "structure_d_to_a_py":        False,
+            "structure_note_py":          f"A类五段式已确认，第三段({seg3:.2f})>第一段({seg1:.2f})×1.5",
+        }
+
+    # ── B类：相邻同向拐点差<3% ────────────────────────────────────────────
+    peaks   = [tp for tp in clean if tp["type"] == "peak"]
+    troughs = [tp for tp in clean if tp["type"] == "trough"]
+
+    has_double_peak = (
+        len(peaks) >= 2 and
+        abs(peaks[-1]["price"] - peaks[-2]["price"]) / max(peaks[-2]["price"], 0.01) < 0.03
+    )
+    has_double_trough = (
+        len(troughs) >= 2 and
+        abs(troughs[-1]["price"] - troughs[-2]["price"]) / max(troughs[-2]["price"], 0.01) < 0.03
+    )
+
+    if has_double_peak or has_double_trough:
+        platform_desc = "高点双平台" if has_double_peak else "低点双平台"
+        return {
+            "structure_type_py":          "B",
+            "structure_current_stage_py": current_stage,
+            "structure_confidence_py":    "medium",
+            "structure_d_to_a_py":        False,
+            "structure_note_py":          f"B类双平台（{platform_desc}，相邻差<3%）",
+        }
+
+    # ── A类（进行中）：≥5个拐点，第三段>第一段但<1.5× ────────────────────
+    if n >= 5 and seg1 > 0 and seg3 > seg1:
+        return {
+            "structure_type_py":          "A",
+            "structure_current_stage_py": current_stage,
+            "structure_confidence_py":    "medium",
+            "structure_d_to_a_py":        False,
+            "structure_note_py":          f"A类进行中（第三段{seg3:.2f}>第一段{seg1:.2f}，待确认×1.5）",
+        }
+
+    # ── C类：默认 ─────────────────────────────────────────────────────────
+    return {
+        "structure_type_py":          "C",
+        "structure_current_stage_py": current_stage,
+        "structure_confidence_py":    "low",
+        "structure_d_to_a_py":        False,
+        "structure_note_py":          f"C类单平台或过渡结构（{n}个拐点，方向待定）",
+    }
+
+
+def compute_divergence_maturity(n_bars: int, div_result: dict) -> dict:
+    """
+    背离成熟度评估（课程："背离是过程，矛盾激化时才有分析价值"）。
+
+    forming      (<3根K线)：背离刚形成，不宜操作
+    intensifying (3-10根)：背离激化中，开始具有分析价值
+    mature       (>10根)： 背离成熟，分析价值高
+    """
+    def _classify(bars: int | None) -> str:
+        if bars is None:
+            return "unknown"
+        if bars < 3:
+            return "forming"
+        elif bars <= 10:
+            return "intensifying"
+        return "mature"
+
+    top_valid    = div_result.get("top_divergence_hard_valid", False)
+    top_peak2    = div_result.get("top_div_peak2_bar")
+    top_bars     = max(0, n_bars - 1 - top_peak2) if (top_valid and top_peak2 is not None) else None
+    top_maturity = _classify(top_bars) if top_valid else "none"
+
+    bot_valid    = div_result.get("bot_divergence_hard_valid", False)
+    bot_trough2  = div_result.get("bot_div_trough2_bar")
+    bot_bars     = max(0, n_bars - 1 - bot_trough2) if (bot_valid and bot_trough2 is not None) else None
+    bot_maturity = _classify(bot_bars) if bot_valid else "none"
+
+    return {
+        "top_div_maturity":   top_maturity,
+        "top_div_bars_since": top_bars,
+        "bot_div_maturity":   bot_maturity,
+        "bot_div_bars_since": bot_bars,
+    }
+
+
+def detect_key_candles(df: pd.DataFrame, key_support: float | None = None) -> dict:
+    """
+    关键K线识别（Golden Candle / 黄金棒）。
+
+    课程条件（三位一体高级课程·关键K）：
+    1. 阳包阴（包住前阴线≥50%）或显著下影线（>30%实体区间）
+    2. 量能缩量（相比前一根K线）
+    3. 下一根K线不破低点（确认信号）
+    4. 临近结构支撑位（±5%，加分项）
+
+    文档："缩量阳包阴，下一根不破低点 → 可补仓"
+    """
+    if df.empty or len(df) < 5:
+        return {"key_candles_last20": [], "latest_golden_candle": None,
+                "golden_candle_near_support": False}
+
+    df = df.copy()
+    has_vol  = "Volume" in df.columns and float(df["Volume"].sum()) > 0
+    lookback = min(20, len(df) - 1)
+    start_i  = len(df) - lookback
+
+    golden_candles = []
+    for i in range(start_i, len(df)):
+        if i == 0:
+            continue
+        o, c = float(df["Open"].iloc[i]),  float(df["Close"].iloc[i])
+        h, l = float(df["High"].iloc[i]),  float(df["Low"].iloc[i])
+        o_prev = float(df["Open"].iloc[i - 1])
+        c_prev = float(df["Close"].iloc[i - 1])
+
+        is_bullish  = c > o
+        full_range  = h - l if h > l else 0.001
+        lower_shad  = (min(o, c) - l) / full_range  # 下影线占比
+
+        # 条件1a: 阳包阴（包住前阴线≥50%）
+        prev_bearish   = c_prev < o_prev
+        engulf_half    = (
+            is_bullish and prev_bearish
+            and c > o_prev                            # 收盘超越前一根开盘
+            and o < c_prev                            # 开盘低于前一根收盘
+            and (c - o) > (o_prev - c_prev) * 0.5    # 包住≥50%
+        )
+
+        # 条件1b: 显著下影线（>30%）
+        long_shadow = is_bullish and lower_shad > 0.30
+
+        if not (engulf_half or long_shadow):
+            continue
+
+        # 条件2: 缩量
+        vol_shrink = False
+        if has_vol and i > 0:
+            v_c = float(df["Volume"].iloc[i])
+            v_p = float(df["Volume"].iloc[i - 1])
+            vol_shrink = (v_c < v_p) if v_p > 0 else False
+
+        # 条件3: 下一根不破低点
+        confirmed = False
+        if i + 1 < len(df):
+            confirmed = float(df["Low"].iloc[i + 1]) >= l
+
+        # 加分：临近支撑位（±5%）
+        near_support = (
+            key_support is not None and key_support > 0
+            and abs(l - key_support) / key_support < 0.05
+        )
+
+        golden_candles.append({
+            "bar_index":        i,
+            "price":            round(c, 4),
+            "pattern":          "bullish_engulfing" if engulf_half else "lower_shadow",
+            "lower_shadow_pct": round(lower_shad, 3),
+            "vol_shrink":       vol_shrink,
+            "near_support":     near_support,
+            "confirmed":        confirmed,
+        })
+
+    confirmed_list = [k for k in golden_candles if k["confirmed"]]
+    latest   = confirmed_list[-1] if confirmed_list else (golden_candles[-1] if golden_candles else None)
+    near_any = any(k["near_support"] for k in golden_candles[-3:]) if golden_candles else False
+
+    return {
+        "key_candles_last20":         golden_candles,
+        "latest_golden_candle":       latest,
+        "golden_candle_near_support": near_any,
     }
