@@ -312,7 +312,9 @@ def compute_turning_points_and_divergence(df: pd.DataFrame) -> dict:
             return f"价格创新高但MACD动能缩减{pct:.1f}%，顶背离有效"
         if top_div.get("price_new_high"):
             return "价格虽创新高但MACD动能同步创高，顶背离不成立"
-        return "当前价未超越前高，顶背离不成立"
+        p1 = top_div.get("peak1_price", "?")
+        p2 = top_div.get("peak2_price", "?")
+        return f"次高点(${p2})未超越前高(${p1})，无顶背离条件（注：当前价若已突破前高，则为新一轮上行，非背离结构）"
 
     def _bot_note() -> str:
         if bot_div_stale:
