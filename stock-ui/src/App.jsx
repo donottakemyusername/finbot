@@ -461,13 +461,17 @@ function TrinityCard({ data }) {
                   <p className="text-white/40 text-xs mt-0.5">
                     {s.trend_alignment === "bullish" ? "价格 > MA55 > MA233"
                       : s.trend_alignment === "bearish" ? "价格 < MA55 < MA233"
-                      : "均线尚未形成方向"}
+                      : s.ma_alignment_bracket || "均线尚未形成方向"}
                   </p>
                 </div>
                 {s.ma_breakout_type && s.ma_breakout_type !== "none" && (
                   <div className="text-right">
                     <p className="text-purple-300 text-xs font-bold">{s.ma_breakout_type} 类突破</p>
-                    <p className="text-white/30 text-xs">{BREAKOUT_DESC[s.ma_breakout_type] || ""}</p>
+                    <p className="text-white/30 text-xs">
+                      {s.ma_breakout_direction === "up" ? "典型突破（向上）"
+                        : s.ma_breakout_direction === "down" ? "典型跌破（向下）"
+                        : BREAKOUT_DESC[s.ma_breakout_type] || ""}
+                    </p>
                   </div>
                 )}
               </div>
@@ -499,15 +503,22 @@ function TrinityCard({ data }) {
                 <div>
                   <div className="flex justify-between text-xs mb-1.5">
                     <span className="text-white/40">布林带位置</span>
-                    <span className={`font-semibold ${bbPct > 80 ? "text-red-400" : bbPct < 20 ? "text-emerald-400" : "text-white/70"}`}>
-                      {bbPct}%
-                      {bbPct > 80 ? " · 接近上轨" : bbPct < 20 ? " · 接近下轨" : " · 中间区域"}
+                    <span className={`font-semibold ${
+                      bbPct > 100 ? "text-red-300"
+                      : bbPct > 80  ? "text-red-400"
+                      : bbPct < 0   ? "text-emerald-300"
+                      : bbPct < 20  ? "text-emerald-400"
+                      : "text-white/70"
+                    }`}>
+                      {bbPct > 100 ? `+${bbPct}% · 突破上轨`
+                        : bbPct < 0  ? `${bbPct}% · 突破下轨 ⚠️`
+                        : bbPct > 80 ? `${bbPct}% · 接近上轨`
+                        : bbPct < 20 ? `${bbPct}% · 接近下轨`
+                        : `${bbPct}% · 中间区域`}
                     </span>
                   </div>
                   <div className="relative h-3 bg-white/8 rounded-full overflow-hidden">
-                    {/* gradient band: lower=green, mid=neutral, upper=red */}
                     <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/40 via-white/10 to-red-500/40 rounded-full" />
-                    {/* position marker */}
                     <div
                       className="absolute top-0.5 bottom-0.5 w-2 bg-white rounded-full shadow-lg transition-all"
                       style={{ left: `calc(${Math.min(Math.max(bbPct, 2), 98)}% - 4px)` }}
@@ -629,12 +640,24 @@ function TrinityCard({ data }) {
             {!r1l && !r1s && s.exit_trigger && (
               <p className="text-white/60 text-xs">止盈触发：{s.exit_trigger}</p>
             )}
-            {s.long_stop_loss && (
+            {/* HOLD 信号同时显示多空止损 */}
+            {s.signal === "hold" && s.long_stop_loss && s.short_stop_loss ? (
+              <div className="pt-1 border-t border-white/8 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-emerald-400/60">多头止损</span>
+                  <span className="text-emerald-300 font-mono font-bold">${(+s.long_stop_loss).toFixed(2)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-red-400/60">空头止损</span>
+                  <span className="text-red-300 font-mono font-bold">${(+s.short_stop_loss).toFixed(2)}</span>
+                </div>
+              </div>
+            ) : s.long_stop_loss ? (
               <div className="flex items-center justify-between pt-1 border-t border-white/8 text-xs">
                 <span className="text-white/30">止损价</span>
                 <span className="text-red-400 font-mono font-bold">${(+s.long_stop_loss).toFixed(2)}</span>
               </div>
-            )}
+            ) : null}
           </>)}
           {s.holding_constraint && (
             <p className="text-orange-400 text-xs border-t border-white/8 pt-2">{s.holding_constraint}</p>

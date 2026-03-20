@@ -314,6 +314,7 @@ def trinity_analysis(
         "multi_timeframe_conflict": time_space.get("multi_timeframe_conflict", False),
         "mtf_conflict_type":       time_space.get("mtf_conflict_type", ""),
         "ma_inverted":             hard_signals.get("ma_inverted", False),
+        "ma_alignment_bracket":    hard_signals.get("trend_alignment_bracket", ""),
     }
 
     # ── Step 7: 验证层 — 确定性规则校验，修正所有已知违规 ────────────────────
