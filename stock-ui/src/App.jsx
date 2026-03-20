@@ -43,14 +43,14 @@ const VERDICT_CONFIG = {
 };
 
 const TOOL_LABELS = {
-  get_stock_overview:          "📊 Overview",
-  analyze_technicals:          "📈 Full Technical",
-  analyze_single_indicator:    "📉 Indicator",
-  analyze_multiple_indicators: "📉 Indicators",
-  analyze_fundamentals:        "📋 Fundamentals",
-  analyze_valuation:           "💰 Valuation",
-  deep_research_edgar:         "📄 EDGAR",
-  get_full_analysis:           "🔬 Full Analysis",
+  get_stock_overview:          "📊 公司概览",
+  analyze_technicals:          "📈 完整技术分析",
+  analyze_single_indicator:    "📉 单一指标",
+  analyze_multiple_indicators: "📉 多指标分析",
+  analyze_fundamentals:        "📋 基本面分析",
+  analyze_valuation:           "💰 估值分析",
+  deep_research_edgar:         "📄 EDGAR研报",
+  get_full_analysis:           "🔬 综合分析",
   trinity_analysis:            "☯️ 三位一体",
 };
 
@@ -665,7 +665,7 @@ function SignalGrid({ indicators }) {
   const entries = Object.entries(indicators);
   if (!entries.length) return null;
   return (
-    <Section title="Signal Summary">
+    <Section title="信号摘要">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {entries.map(([key, val]) => {
           const c = sc(val.signal);
@@ -692,7 +692,7 @@ function WinRateChart({ indicators }) {
     }));
   if (!data.length) return null;
   return (
-    <Section title="5-Year Backtest Win Rates">
+    <Section title="5年回测胜率">
       <div className="overflow-x-auto">
         <div style={{ minWidth: 260 }}>
           <ResponsiveContainer width="100%" height={Math.max(90, data.length * 38)}>
@@ -700,7 +700,7 @@ function WinRateChart({ indicators }) {
               <CartesianGrid {...GRID} horizontal={false} />
               <XAxis type="number" domain={[0, 100]} tick={ATICK} tickFormatter={v => `${v}%`} />
               <YAxis type="category" dataKey="name" tick={ATICK} width={70} />
-              <Tooltip content={<Tip />} formatter={v => [`${v}%`, "Win Rate"]} />
+              <Tooltip content={<Tip />} formatter={v => [`${v}%`, "胜率"]} />
               <ReferenceLine x={50} stroke="rgba(255,255,255,0.2)" strokeDasharray="4 4" />
               <Bar dataKey="winRate" radius={[0, 4, 4, 0]} name="Win Rate">
                 {data.map((d, i) => <Cell key={i} fill={sc(d.signal).hex} fillOpacity={0.8} />)}
@@ -729,12 +729,12 @@ function EquityCurve({ trades, name, winRate, totalReturn, buyHold }) {
   const col = totalReturn >= 0 ? "#10b981" : "#ef4444";
   const id  = `eq_${name.replace(/\s/g, "_")}`;
   return (
-    <Section title={`${name} — Equity Curve`}>
+    <Section title={`${name} — 资金曲线`}>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs mb-1">
-        <span style={{ color: col }}>Strategy: {totalReturn > 0 ? "+" : ""}{totalReturn?.toFixed(1)}%</span>
-        <span className="text-indigo-400">B&H: {buyHold > 0 ? "+" : ""}{buyHold?.toFixed(1)}%</span>
-        <span className="text-white/40">Win: <span className="text-white/70">{winRate?.toFixed(1)}%</span></span>
-        <span className="text-white/40">Trades: <span className="text-white/70">{trades.length}</span></span>
+        <span style={{ color: col }}>策略: {totalReturn > 0 ? "+" : ""}{totalReturn?.toFixed(1)}%</span>
+        <span className="text-indigo-400">买持: {buyHold > 0 ? "+" : ""}{buyHold?.toFixed(1)}%</span>
+        <span className="text-white/40">胜率: <span className="text-white/70">{winRate?.toFixed(1)}%</span></span>
+        <span className="text-white/40">交易次数: <span className="text-white/70">{trades.length}</span></span>
       </div>
       <ResponsiveContainer width="100%" height={130}>
         <AreaChart data={data}>
@@ -747,7 +747,7 @@ function EquityCurve({ trades, name, winRate, totalReturn, buyHold }) {
           <CartesianGrid {...GRID} />
           <XAxis dataKey="i" tick={ATICK} />
           <YAxis tick={ATICK} tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} width={42} />
-          <Tooltip content={<Tip />} formatter={v => [`$${v.toLocaleString()}`, "Portfolio"]} labelFormatter={l => `Trade #${l}`} />
+          <Tooltip content={<Tip />} formatter={v => [`$${v.toLocaleString()}`, "组合"]} labelFormatter={l => `第${l}笔`} />
           <ReferenceLine y={10000} stroke="rgba(255,255,255,0.15)" strokeDasharray="4 4" />
           <Area type="monotone" dataKey="v" stroke={col} fill={`url(#${id})`} strokeWidth={1.5} dot={false} name="Portfolio" />
         </AreaChart>
@@ -765,13 +765,13 @@ function FundamentalsRadar({ sections }) {
   }));
   if (!data.length) return null;
   return (
-    <Section title="Fundamentals Radar">
+    <Section title="基本面雷达图">
       <ResponsiveContainer width="100%" height={180}>
         <RadarChart data={data}>
           <PolarGrid stroke="rgba(255,255,255,0.1)" />
           <PolarAngleAxis dataKey="subject" tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 9 }} />
-          <Radar dataKey="score" stroke="#818cf8" fill="#818cf8" fillOpacity={0.2} strokeWidth={1.5} name="Score" />
-          <Tooltip content={<Tip />} formatter={v => [v >= 80 ? "Bullish" : v >= 40 ? "Neutral" : "Bearish", "Signal"]} />
+          <Radar dataKey="score" stroke="#818cf8" fill="#818cf8" fillOpacity={0.2} strokeWidth={1.5} name="评分" />
+          <Tooltip content={<Tip />} formatter={v => [v >= 80 ? "看涨" : v >= 40 ? "中性" : "看跌", "信号"]} />
         </RadarChart>
       </ResponsiveContainer>
       <div className="space-y-1.5 border-t border-white/8 pt-2">
@@ -800,11 +800,11 @@ function ValuationGapChart({ methods, weightedGap }) {
     }));
   if (!data.length) return null;
   return (
-    <Section title="Intrinsic Value Gap">
+    <Section title="内在价值差距">
       <div className="flex flex-wrap justify-between items-center gap-1">
-        <p className="text-white/30 text-xs">+ = undervalued · − = overvalued</p>
+        <p className="text-white/30 text-xs">+ = 低估 · − = 高估</p>
         <span className={`text-sm font-bold ${weightedGap > 0 ? "text-emerald-400" : "text-red-400"}`}>
-          Weighted: {weightedGap > 0 ? "+" : ""}{weightedGap?.toFixed(1)}%
+          加权: {weightedGap > 0 ? "+" : ""}{weightedGap?.toFixed(1)}%
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -814,7 +814,7 @@ function ValuationGapChart({ methods, weightedGap }) {
               <CartesianGrid {...GRID} horizontal={false} />
               <XAxis type="number" tick={ATICK} tickFormatter={v => `${v > 0 ? "+" : ""}${v}%`} />
               <YAxis type="category" dataKey="name" tick={ATICK} width={72} />
-              <Tooltip content={<Tip />} formatter={v => [`${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`, "Gap"]} />
+              <Tooltip content={<Tip />} formatter={v => [`${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`, "差距"]} />
               <ReferenceLine x={0}   stroke="rgba(255,255,255,0.25)" />
               <ReferenceLine x={15}  stroke="#10b981" strokeDasharray="3 3" strokeOpacity={0.5} />
               <ReferenceLine x={-15} stroke="#ef4444" strokeDasharray="3 3" strokeOpacity={0.5} />
@@ -835,7 +835,7 @@ function OverviewCard({ data }) {
   const chg = data["price_change_1y_%"] ?? data.price_change_1y_pct;
   const isUp = chg >= 0;
   return (
-    <Section title="Company Overview">
+    <Section title="公司概览">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-base sm:text-lg font-bold text-white truncate">{data.name}</p>
@@ -844,13 +844,13 @@ function OverviewCard({ data }) {
         <div className="text-right flex-shrink-0">
           <p className="text-lg sm:text-xl font-bold text-white">${data.price}</p>
           <p className={`text-xs font-semibold ${isUp ? "text-emerald-400" : "text-red-400"}`}>
-            {isUp ? "▲" : "▼"} {Math.abs(chg)?.toFixed(1)}% (1Y)
+            {isUp ? "▲" : "▼"} {Math.abs(chg)?.toFixed(1)}% (1年)
           </p>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2 border-t border-white/8 pt-3">
-        {[["52W High", `$${data["52w_high"]}`], ["52W Low", `$${data["52w_low"]}`],
-          ["Mkt Cap", data.market_cap ? `$${(data.market_cap / 1e9).toFixed(1)}B` : "N/A"]].map(([label, val]) => (
+        {[["52周高", `$${data["52w_high"]}`], ["52周低", `$${data["52w_low"]}`],
+          ["市值", data.market_cap ? `$${(data.market_cap / 1e9).toFixed(1)}B` : "N/A"]].map(([label, val]) => (
           <div key={label}>
             <p className="text-white/30 text-xs">{label}</p>
             <p className="text-white/80 text-xs sm:text-sm font-semibold">{val}</p>
@@ -873,7 +873,7 @@ function VerdictCard({ data }) {
         <div className="flex items-center gap-3">
           <span className="text-3xl sm:text-4xl font-black">{cfg.icon} {data.ai_verdict}</span>
           <div>
-            <p className="text-white/60 text-xs">AI Confidence</p>
+            <p className="text-white/60 text-xs">AI 置信度</p>
             <p className="text-lg sm:text-xl font-bold">{data.ai_confidence}%</p>
           </div>
         </div>
@@ -892,7 +892,7 @@ function VerdictCard({ data }) {
       {(data.supporting_arguments?.length > 0 || data.key_risks?.length > 0) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div>
-            <p className="text-white/50 text-xs uppercase tracking-wider mb-2">Supporting</p>
+            <p className="text-white/50 text-xs uppercase tracking-wider mb-2">支撑因素</p>
             <ul className="space-y-1.5">
               {data.supporting_arguments?.map((a, i) => (
                 <li key={i} className="flex gap-1.5 text-xs text-white/75 leading-relaxed">
@@ -902,7 +902,7 @@ function VerdictCard({ data }) {
             </ul>
           </div>
           <div>
-            <p className="text-white/50 text-xs uppercase tracking-wider mb-2">Key Risks</p>
+            <p className="text-white/50 text-xs uppercase tracking-wider mb-2">主要风险</p>
             <ul className="space-y-1.5">
               {data.key_risks?.map((r, i) => (
                 <li key={i} className="flex gap-1.5 text-xs text-white/75 leading-relaxed">
@@ -1083,15 +1083,15 @@ function TypingDots() {
 const QUICK = [
   "AAPL三位一体分析",
   "TSLA的时空状态和主涨段",
-  "Full analysis on NVDA",
-  "Bollinger + RSI for MSFT",
+  "NVDA综合分析",
+  "MSFT布林带+RSI分析",
 ];
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [messages, setMessages] = useState([{
     role: "assistant",
-    content: "Hi! I'm **AlphaLens** — your AI stock analyst with Trinity Trading System.\n\nAsk me in Chinese or English. Examples:\n- AAPL三位一体分析（时空状态+均线+结构）\n- TSLA现在是主涨段吗？该加仓还是做T？\n- Full analysis on NVDA\n- Bollinger + RSI for MSFT",
+    content: "你好！我是 **AlphaLens** — 搭载三位一体交易系统的AI股票分析师。\n\n直接告诉我你想分析的股票，例如：\n- AAPL三位一体分析（时空状态+均线+结构）\n- TSLA现在是主涨段吗？该加仓还是做T？\n- NVDA综合分析\n- MSFT布林带+RSI分析",
   }]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
@@ -1164,8 +1164,8 @@ export default function App() {
       }]);
     } catch (e) {
       const errMsg = e.name === "AbortError"
-        ? "⚠️ **Request timed out.** Trinity analysis can take 2-3 minutes — please try again."
-        : `⚠️ **Error:** ${e.message}`;
+        ? "⚠️ **请求超时。** 三位一体分析通常需要 2-3 分钟，请稍后重试。"
+        : `⚠️ **出错了：** ${e.message}`;
       setMessages(p => p.filter(m => !m._retrying));
       setMessages(p => [...p, { role: "assistant", content: errMsg }]);
     } finally {
@@ -1189,7 +1189,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-1.5">
           <div className={`w-2 h-2 rounded-full ${status === "ok" ? "bg-emerald-400" : status === "error" ? "bg-red-400" : "bg-amber-400 animate-pulse"}`} />
-          <span className="text-white/30 text-xs">{status === "ok" ? "Live" : status === "error" ? "Offline" : "…"}</span>
+          <span className="text-white/30 text-xs">{status === "ok" ? "在线" : status === "error" ? "离线" : "…"}</span>
         </div>
       </div>
 
@@ -1225,7 +1225,7 @@ export default function App() {
                 e.preventDefault(); send();
               }
             }}
-            placeholder="Ask about any stock… / 分析任何股票"
+            placeholder="输入股票代码或问题，例如：TSLA三位一体分析"
             style={{ minHeight: "44px", maxHeight: "120px", fontSize: "16px" }}
             className="flex-1 bg-[#161b22] border border-white/15 focus:border-blue-400/60 rounded-xl px-3.5 sm:px-4 py-2.5 sm:py-3 text-white placeholder-white/30 resize-none focus:outline-none transition-colors leading-relaxed"
           />
@@ -1236,7 +1236,7 @@ export default function App() {
               : "↑"}
           </button>
         </div>
-        <p className="text-white/15 text-xs mt-2 text-center">For informational purposes only. Not financial advice.</p>
+        <p className="text-white/15 text-xs mt-2 text-center">仅供参考，不构成任何投资建议。</p>
       </div>
     </div>
   );
