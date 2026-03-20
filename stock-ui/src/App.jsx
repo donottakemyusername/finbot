@@ -642,6 +642,16 @@ function TrinityCard({ data }) {
         </div>
       </div>
 
+      {/* ── 验证层修正日志 ── */}
+      {s._corrections?.length > 0 && (
+        <div className="bg-amber-500/6 border border-amber-500/20 rounded-xl px-3 py-2.5 space-y-1">
+          <p className="text-amber-400/70 text-xs font-semibold uppercase tracking-wider">规则校验已修正 {s._corrections.length} 项</p>
+          {s._corrections.map((c, i) => (
+            <p key={i} className="text-amber-300/50 text-xs leading-relaxed">· {c}</p>
+          ))}
+        </div>
+      )}
+
       {/* ── 入场方向 ── */}
       <div className={`flex items-center gap-3 rounded-xl px-3 py-2.5 border ${sc_.border} ${sc_.bg}`}>
         <span className={`text-lg font-black ${sc_.text}`}>{sc_.hex === "#10b981" ? "↑" : sc_.hex === "#ef4444" ? "↓" : "→"}</span>

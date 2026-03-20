@@ -98,7 +98,8 @@ def compute_ma_signals(df: pd.DataFrame) -> dict:
             # 价格在两条均线下方，但MA233 > MA55（罕见倒置状态）
             alignment_bracket = "（价格 < MA233，均线倒置）"
         else:
-            alignment_bracket = ""
+            # 价格在两线上方，但MA55 < MA233（均线本身倒置，长期趋势未修复）
+            alignment_bracket = "（均线倒置：MA55 < MA233，长期趋势未修复）"
     else:
         alignment_bracket = ""
 
@@ -109,6 +110,7 @@ def compute_ma_signals(df: pd.DataFrame) -> dict:
         "trend_alignment":         alignment,
         "trend_alignment_zh":      alignment_zh,        # ← Claude直接读取，禁止自行推断排列
         "trend_alignment_bracket": alignment_bracket,   # ← 混沌排列的精确括号注释
+        "ma_inverted":             bool(ma55 < ma233),  # ← 均线倒置标志（MA55 < MA233）
         "ma55_slope":              round(ma55_slope, 6),
         "ma233_slope":             round(ma233_slope, 6),
         "dist_from_ma55":          round(dist_ma55, 4),

@@ -18,6 +18,7 @@ from tools.trinity.indicators import (
 )
 from tools.trinity.state import compute_time_space_state
 from tools.trinity.prompt import call_claude_for_soft_signals
+from tools.trinity.verify import verify_trinity_output
 
 
 def _merge_claude_with_python(claude_output: dict, hard_signals: dict,
@@ -121,6 +122,46 @@ def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
         # 匹配"（根据key_support XXX × 0.97计算）"
         action = _re.sub(r'[（(][^）)]{0,50}计算[^）)]{0,10}[）)]', '', action)
         composite["suggested_action"] = action.strip()
+
+    # ── 超扩延 + 高布林带 + 风险收益比 硬约束 ──────────────────────────────────
+    dist_ma55  = hard_signals.get("dist_from_ma55", 0)
+    bb_pos     = hard_signals.get("price_position", 0.5)
+    cur_price  = hard_signals.get("current_price", 0) or 0
+    key_res    = hard_signals.get("key_resistance")
+    lsl        = hard_signals.get("long_stop_loss")
+    ma55_val   = hard_signals.get("ma55")
+    signal     = composite.get("signal", "hold")
+
+    # 风险收益比计算
+    rr_ratio = None
+    if key_res and lsl and cur_price and key_res > cur_price and cur_price > lsl:
+        upside   = (key_res - cur_price) / cur_price
+        downside = (cur_price - lsl)     / cur_price
+        rr_ratio = round(upside / downside, 2) if downside > 0 else 0
+
+    overextended = dist_ma55 > 0.15 and bb_pos > 0.80
+    poor_rr      = rr_ratio is not None and rr_ratio < 1.0
+
+    if signal in ("buy", "strong_buy") and (overextended or poor_rr):
+        composite["position_size"] = "light"
+        risk_parts = []
+        if overextended:
+            risk_parts.append(
+                f"价格偏离MA55达{dist_ma55*100:.1f}%且布林带位置{int(bb_pos*100)}%，超扩延不宜追高"
+            )
+        if poor_rr:
+            risk_parts.append(
+                f"风险收益比{rr_ratio:.2f}<1（至压力位空间不足止损范围），不建议新建仓"
+            )
+        composite["key_risk"] = "；".join(risk_parts)
+
+        if overextended and poor_rr:
+            ma55_str = f"${ma55_val:.2f}" if ma55_val else "MA55"
+            composite["suggested_action"] = (
+                f"方向看多但当前不宜新建仓，等待回踩{ma55_str}附近黄金棒确认再入场；"
+                f"已持仓者观望，止损设在 {lsl}"
+            )
+            composite["entry_side"] = "wait"
 
     pattern_analysis["composite"] = composite
     return pattern_analysis
@@ -272,14 +313,18 @@ def trinity_analysis(
         "holding_constraint":   exit_g.get("holding_constraint_note", ""),
         "multi_timeframe_conflict": time_space.get("multi_timeframe_conflict", False),
         "mtf_conflict_type":       time_space.get("mtf_conflict_type", ""),
+        "ma_inverted":             hard_signals.get("ma_inverted", False),
     }
+
+    # ── Step 7: 验证层 — 确定性规则校验，修正所有已知违规 ────────────────────
+    summary = verify_trinity_output(summary, hard_signals, time_space)
 
     return {
         "ticker":            ticker,
         "time_space_state":  time_space,
         "hard_signals":      hard_signals,
         "pattern_analysis":  pattern_analysis,
-        "price_chart_data":  price_chart_data,   # ← 新增，供前端画图
+        "price_chart_data":  price_chart_data,
         "summary":           summary,
     }
 

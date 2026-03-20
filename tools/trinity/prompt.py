@@ -56,6 +56,16 @@ SYSTEM_PROMPT = """
 
 【规则7】状态标签精确
 → 弱≠极弱，极强≠强，必须用state_label原文
+
+【规则8】B类结构方向判断
+→ B类（双平台）本质是震荡，likely_next_move默认填"sideways"
+→ 仅当价格已明确突破双平台上边界（偏离高点>3%）且时空状态为强时，才可填"up"
+→ structure_note须写明"双平台上沿突破"或"双平台震荡整理"，不可简单写"上涨"
+
+【规则9】均线倒置（ma_inverted=true）
+→ 均线倒置指 MA55 < MA233，长期趋势未修复，属于"恢复性反弹"而非标准趋势延伸
+→ 均线倒置时 confidence 不能给 high，最高 medium
+→ key_risk 须包含"均线倒置，MA55需上穿MA233才算趋势修复"
 """.strip()
 
 
@@ -246,6 +256,11 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
         extras.append(f"🚨 状态跳变：{STATE_LABELS.get(prev, prev)}→{state.get('state_label')}，confidence应降低。")
     if time_space.get("multi_timeframe_conflict", False):
         extras.append(f"🚨 级别冲突：{time_space.get('mtf_conflict_type', '')} → confidence≤medium。")
+    if hard_signals.get("ma_inverted", False):
+        extras.append(
+            "⚠️ 均线倒置（MA55 < MA233）：价格虽超越双均线，但长期趋势未修复。"
+            "confidence最高medium，key_risk须提及'MA55需上穿MA233才算趋势修复'。"
+        )
     extra_text = "\n".join(extras)
 
     # ── Python预算摘要（Claude只需引用数字，不需要重新计算）───────────────
@@ -283,11 +298,17 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     )
 
     # 均线摘要
-    ma_type = hard_signals.get('ma_breakout_type_py', 'unknown')
-    ma_dir  = hard_signals.get('ma_breakout_direction_py', 'none')
-    align_zh = hard_signals.get('trend_alignment_zh', '混沌排列')
-    align_br = hard_signals.get('trend_alignment_bracket', '')
-    ma_summary = f"均线排列：{align_zh}{align_br}，突破类型：{ma_type}类（{ma_dir}）"
+    ma_type     = hard_signals.get('ma_breakout_type_py', 'unknown')
+    ma_dir      = hard_signals.get('ma_breakout_direction_py', 'none')
+    align_zh    = hard_signals.get('trend_alignment_zh', '混沌排列')
+    align_br    = hard_signals.get('trend_alignment_bracket', '')
+    ma_inverted = hard_signals.get('ma_inverted', False)
+    ma_summary  = f"均线排列：{align_zh}{align_br}，突破类型：{ma_type}类（{ma_dir}）"
+    if ma_inverted:
+        ma_summary += (
+            "\n⚠️ 均线倒置警告：MA55 < MA233，属于恢复性反弹而非趋势延伸。"
+            "A类突破的可信度低于标准多头排列，需MA55上穿MA233才算长期趋势修复。"
+        )
 
     # 结构预判（Python硬计算，Claude验证后输出）
     struct_type  = hard_signals.get('structure_type_py', 'unknown')
