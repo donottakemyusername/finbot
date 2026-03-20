@@ -370,7 +370,9 @@ function TrinityCard({ data }) {
                   <span className="text-amber-300/80">
                     {["strong", "extreme_strong", "mid_strong"].includes(s.state_code)
                       ? "状态刚跳升，尚不稳定，需3根以上K线确认后再加仓"
-                      : "状态发生回落，动能钝化，留意上升持续性"}
+                      : ["weak", "extreme_weak", "mid_weak"].includes(s.state_code)
+                        ? "状态急速转弱，动能恶化，等待至少3根K线企稳后再判断方向"
+                        : "状态发生回落，动能钝化，留意趋势能否延续"}
                   </span>
                 </div>
               )}

@@ -210,7 +210,7 @@ def verify_trinity_output(
                 f"[golden_candle] 黄金棒${gc_price:.2f}高于当前价{stale_pct:.1f}%，信号陈旧"
             )
 
-    # ── R14：价格贴近关键支撑（<3%）→ 破位风险预警 ───────────────────────────
+    # ── R14：价格贴近或已跌破关键支撑 → 破位预警 ────────────────────────────
     key_sup = hard_signals.get("key_support") or summary.get("key_support")
     if key_sup and cur_price > 0:
         dist_to_sup = (cur_price - float(key_sup)) / cur_price
@@ -221,6 +221,16 @@ def verify_trinity_output(
             )
             corrections.append(
                 f"[support_proximity] 价格距支撑仅{dist_to_sup*100:.1f}%，已附加破位预警"
+            )
+        elif dist_to_sup < 0:
+            # 价格已跌破支撑位
+            broken_pct = abs(dist_to_sup) * 100
+            _append_risk(
+                f"关键支撑${float(key_sup):.2f}已被跌破（当前价${cur_price:.2f}，"
+                f"跌破{broken_pct:.1f}%），结构支撑失效，多头止损参考价需重新评估"
+            )
+            corrections.append(
+                f"[support_broken] 价格已跌破支撑${float(key_sup):.2f}（跌破{broken_pct:.1f}%），已附加破位警告"
             )
 
     # ── R16：B 类结构未突破 → likely_next 不能为 "up" ─────────────────────────
