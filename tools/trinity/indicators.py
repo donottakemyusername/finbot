@@ -273,7 +273,25 @@ def compute_turning_points_and_divergence(df: pd.DataFrame) -> dict:
     ]
 
     # ── 硬性有效性预判 ────────────────────────────────────────────────────────
-    current_price = float(closes[-1])
+    current_price   = float(closes[-1])
+    current_bar     = float(bar_vals[-1])
+
+    # ── 实时顶背离预警：当前价已超越最近历史高点，但MACD动能更弱 ──────────────
+    # 注：这不是"确认"背离（当前点尚未形成回落确认），而是早期警示信号
+    live_top_div_warning = False
+    live_top_div_note    = ""
+    if len(last_peaks) >= 1:
+        ref_idx   = last_peaks[-1]
+        ref_price = float(closes[ref_idx])
+        ref_bar   = float(bar_vals[ref_idx])
+        if current_price > ref_price and current_bar < ref_bar:
+            bar_drop_pct = abs((current_bar - ref_bar) / abs(ref_bar)) * 100 if ref_bar != 0 else 0
+            live_top_div_warning = True
+            live_top_div_note = (
+                f"⚠️ 实时顶背离预警：当前价${current_price:.2f}已超越前高${ref_price:.2f}，"
+                f"但MACD柱动能缩减{bar_drop_pct:.1f}%（前高柱={ref_bar:+.4f}，当前={current_bar:+.4f}）。"
+                f"尚未确认（需等待回落），但需警惕见顶风险。"
+            )
 
     top_hard_valid = bool(
         top_div is not None
@@ -335,6 +353,8 @@ def compute_turning_points_and_divergence(df: pd.DataFrame) -> dict:
         "bot_divergence_hard_valid": bot_hard_valid,
         "top_div_stale":             top_div_stale,
         "bot_div_stale":             bot_div_stale,
+        "live_top_div_warning":      live_top_div_warning,
+        "live_top_div_note":         live_top_div_note,
         "top_divergence_note_py":    _top_note(),
         "bot_divergence_note_py":    _bot_note(),
         "turning_points":            turning_points,

@@ -271,10 +271,15 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     _bot_mat_str = (f"，成熟度={bot_mat}（距形成{bot_mat_bars}根K线）"
                     if bot_div_valid and bot_mat not in ("none", "unknown") else "")
 
+    live_warning = hard_signals.get('live_top_div_warning', False)
+    live_note    = hard_signals.get('live_top_div_note', '')
+    _live_str    = f"\n实时预警：{live_note}" if live_warning else ""
+
     div_summary = (
         f"顶背离：{'✅有效' if top_div_valid else '❌无效'}（{top_note}）{_top_mat_str}\n"
         f"底背离：{'✅有效' if bot_div_valid else '❌无效'}（{bot_note}）{_bot_mat_str}\n"
         f"调整充分：{'是' if adj_suff else '否'}"
+        f"{_live_str}"
     )
 
     # 均线摘要
