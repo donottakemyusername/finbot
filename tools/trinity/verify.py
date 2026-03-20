@@ -159,15 +159,16 @@ def verify_trinity_output(
         hard_signals["bot_divergence_hard_valid"] = False
         corrections.append("[bot_div] 底背离无效：60 日内 DIF/DEA 未穿越零轴，调整不充分")
 
-    # ── R11：价格超扩延（dist>15% 且布林>80%）→ 不宜追高 ─────────────────────
-    overextended = dist_ma55 > 0.15 and bb_pos > 0.80
+    # ── R11：价格超扩延 → 不宜追高 ──────────────────────────────────────────────
+    # 超扩延条件：MA55偏离>15%且布林>80%，或者 overextension_hard=True（含MA233偏离>40%）
+    overextended = (dist_ma55 > 0.15 and bb_pos > 0.80) or overext_hard
     if overextended and signal in ("buy", "strong_buy"):
-        _cap_position("light", f"超扩延 {dist_ma55*100:.1f}% + 布林 {int(bb_pos*100)}%")
-        _set_entry("wait",    f"超扩延不宜追高，等待回踩 MA55")
+        _cap_position("light", f"超扩延（MA55偏离{dist_ma55*100:.1f}%，布林{int(bb_pos*100)}%）")
+        _set_entry("wait",    "超扩延不宜追高，等待回踩 MA55")
         ma55_str = f"${ma55_val:.2f}" if ma55_val else "MA55"
         _append_risk(f"价格超扩延，等待回踩 {ma55_str} 附近黄金棒确认再入场")
 
-    # ── R12：风险收益比 < 1.0 → 不建议新建仓 ─────────────────────────────────
+    # ── R12：风险收益比计算 ────────────────────────────────────────────────────
     rr_ratio = None
     if key_res and lsl and cur_price and key_res > cur_price and cur_price > lsl:
         upside   = (key_res - cur_price) / cur_price
@@ -175,11 +176,23 @@ def verify_trinity_output(
         rr_ratio = round(upside / downside, 2) if downside > 0 else 0.0
     summary["rr_ratio"] = rr_ratio
 
+    # buy/strong_buy：RR < 1 → 不建议新建仓
     if rr_ratio is not None and rr_ratio < 1.0 and signal in ("buy", "strong_buy"):
         _cap_position("light", f"风险收益比 {rr_ratio:.2f} < 1")
         _set_entry("wait",     f"风险收益比 {rr_ratio:.2f} 不足 1")
         _append_risk(
             f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 空间 < 止损 ${lsl:.2f} 距离）"
+        )
+
+    # hold：RR 极差（<0.1）→ 附加警告，禁止文字建议加仓
+    if rr_ratio is not None and rr_ratio < 0.1 and signal == "hold":
+        _append_risk(
+            f"风险收益比极差 {rr_ratio:.3f}（至近端压力 ${key_res:.2f} 仅"
+            f" {(key_res - cur_price):.2f} 点，止损距离 {(cur_price - lsl):.2f} 点）"
+            f"，不建议在当前位置加仓，等待突破 ${key_res:.2f} 后确认再操作"
+        )
+        corrections.append(
+            f"[rr_warning] HOLD信号下RR={rr_ratio:.3f}极差，已附加key_risk警告"
         )
 
     # ── R13：B 类结构未突破 → likely_next 不能为 "up" ─────────────────────────

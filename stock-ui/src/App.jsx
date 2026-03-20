@@ -367,7 +367,11 @@ function TrinityCard({ data }) {
               {s.state_anomaly && (
                 <div className="flex items-start gap-2 bg-amber-500/8 border border-amber-500/20 rounded-lg px-3 py-2 text-xs">
                   <span className="text-amber-400 flex-shrink-0">⚡</span>
-                  <span className="text-amber-300/80">状态发生回落，动能钝化，留意上升持续性</span>
+                  <span className="text-amber-300/80">
+                    {["strong", "extreme_strong", "mid_strong"].includes(s.state_code)
+                      ? "状态刚跳升，尚不稳定，需3根以上K线确认后再加仓"
+                      : "状态发生回落，动能钝化，留意上升持续性"}
+                  </span>
                 </div>
               )}
 
