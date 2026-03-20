@@ -142,17 +142,24 @@ def verify_trinity_output(
         if signal in ("buy", "strong_buy"):
             _append_risk("均线倒置：MA55 需上穿 MA233 才算趋势真正修复")
 
-    # ── R08：顶背离有效 → 降低仓位，不允许 strong_buy ──────────────────────────
+    # ── R08：顶背离有效 → 降低仓位，不允许 strong_buy，压制回踩入场标签 ──────────
     if top_div_valid:
         _cap_position("moderate", "顶背离有效，降低仓位上限")
         if signal == "strong_buy":
             _set_signal("buy", "顶背离有效时不允许 strong_buy")
+        # 顶背离有效时，"回踩MA55机会"标签与背离方向矛盾，压制显示
+        if summary.get("pullback_opportunity") and summary.get("pullback_side") == "buy":
+            summary["pullback_opportunity"] = False
+            corrections.append("[pullback_opportunity] 顶背离有效，压制回踩入场标签（避免与背离信号矛盾）")
 
-    # ── R09：实时顶背离预警 → confidence ≤ medium，仓位轻 ─────────────────────
+    # ── R09：实时顶背离预警 → confidence ≤ medium，仓位轻，压制回踩标签 ──────────
     if live_warning and signal in ("buy", "strong_buy"):
         _cap_confidence("medium", "实时顶背离预警（当前价超前高但 MACD 动能弱）")
         _cap_position("light",    "实时顶背离预警，轻仓观察")
         _append_risk("实时顶背离预警：新高动能不足，注意见顶风险")
+    if live_warning and summary.get("pullback_opportunity") and summary.get("pullback_side") == "buy":
+        summary["pullback_opportunity"] = False
+        corrections.append("[pullback_opportunity] 实时顶背离预警，压制回踩入场标签")
 
     # ── R10：底背离调整不充分 → 底背离无效（兜底校验）─────────────────────────
     if bot_div_valid and not adj_suff:
