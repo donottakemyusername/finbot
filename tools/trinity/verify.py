@@ -195,14 +195,42 @@ def verify_trinity_output(
             f"[rr_warning] HOLD信号下RR={rr_ratio:.3f}极差，已附加key_risk警告"
         )
 
-    # ── R13：B 类结构未突破 → likely_next 不能为 "up" ─────────────────────────
+    # ── R13：黄金棒陈旧检查 ───────────────────────────────────────────────────
+    # 若最新黄金棒的收盘价比当前价高 >3%，说明价格已跌穿黄金棒信号区，信号失效
+    latest_gc = hard_signals.get("latest_golden_candle")
+    if latest_gc and latest_gc.get("confirmed") and cur_price > 0:
+        gc_price = float(latest_gc.get("price", 0))
+        if gc_price > 0 and gc_price > cur_price * 1.03:
+            stale_pct = (gc_price - cur_price) / cur_price * 100
+            _append_risk(
+                f"黄金棒（${gc_price:.2f}）在当前价${cur_price:.2f}上方{stale_pct:.1f}%，"
+                f"价格已跌穿黄金棒信号区，多头支撑信号已失效"
+            )
+            corrections.append(
+                f"[golden_candle] 黄金棒${gc_price:.2f}高于当前价{stale_pct:.1f}%，信号陈旧"
+            )
+
+    # ── R14：价格贴近关键支撑（<3%）→ 破位风险预警 ───────────────────────────
+    key_sup = hard_signals.get("key_support") or summary.get("key_support")
+    if key_sup and cur_price > 0:
+        dist_to_sup = (cur_price - float(key_sup)) / cur_price
+        if 0 < dist_to_sup < 0.03:
+            _append_risk(
+                f"当前价${cur_price:.2f}距关键支撑${float(key_sup):.2f}仅"
+                f"{dist_to_sup*100:.1f}%，破位风险高，请设好止损"
+            )
+            corrections.append(
+                f"[support_proximity] 价格距支撑仅{dist_to_sup*100:.1f}%，已附加破位预警"
+            )
+
+    # ── R16：B 类结构未突破 → likely_next 不能为 "up" ─────────────────────────
     if struct_type == "B" and likely_next == "up":
         broken_out = (key_res is not None and cur_price > float(key_res) * 1.03)
         if not broken_out:
             summary["likely_next"] = "sideways"
             corrections.append("[structure] B 类未突破压力位 → likely_next: up → sideways")
 
-    # ── R14：high confidence 需两维度共振，单维度降为 medium ──────────────────
+    # ── R17：high confidence 需两维度共振，单维度降为 medium ──────────────────
     if confidence == "high":
         top_div_risk   = top_div_valid or live_warning
         state_misalign = (

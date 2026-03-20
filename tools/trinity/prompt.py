@@ -275,6 +275,9 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     top_note = hard_signals.get('top_divergence_note_py', '')
     bot_note = hard_signals.get('bot_divergence_note_py', '')
     adj_suff = hard_signals.get('adjustment_sufficient', False)
+    # 注意：adjustment_sufficient=True 仅代表"底背离如出现则有效"的前提条件，
+    # 不代表反弹信号已成型。在文字中只能写"调整充分，若出现底背离则有效"，
+    # 禁止写"反弹信号已成型/初步成型"。
 
     # 背离成熟度（Python计算，课程：矛盾激化才有分析价值）
     top_mat      = hard_signals.get('top_div_maturity', 'none')
@@ -290,10 +293,14 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
     live_note    = hard_signals.get('live_top_div_note', '')
     _live_str    = f"\n实时预警：{live_note}" if live_warning else ""
 
+    _adj_note = (
+        "是（DIF/DEA已穿越零轴，底背离若出现则条件有效；但调整充分≠反弹信号，不可写'反弹信号成型'）"
+        if adj_suff else "否（DIF/DEA未充分穿越零轴，底背离即使出现也无效）"
+    )
     div_summary = (
         f"顶背离：{'✅有效' if top_div_valid else '❌无效'}（{top_note}）{_top_mat_str}\n"
         f"底背离：{'✅有效' if bot_div_valid else '❌无效'}（{bot_note}）{_bot_mat_str}\n"
-        f"调整充分：{'是' if adj_suff else '否'}"
+        f"调整充分：{_adj_note}"
         f"{_live_str}"
     )
 
