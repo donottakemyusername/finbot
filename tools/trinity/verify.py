@@ -180,11 +180,14 @@ def verify_trinity_output(
     if rr_ratio is not None and rr_ratio < 1.0 and signal in ("buy", "strong_buy"):
         _cap_position("light", f"风险收益比 {rr_ratio:.2f} < 1")
         _set_entry("wait",     f"风险收益比 {rr_ratio:.2f} 不足 1")
-        upside_pts  = key_res - cur_price
+        upside_pts   = key_res - cur_price
         downside_pts = cur_price - lsl
+        # 根据数值大小动态选择小数位，避免小价格股票显示 "0.0 点"
+        def _fmt(v: float) -> str:
+            return f"{v:.3f}" if v < 0.1 else f"{v:.2f}" if v < 1 else f"{v:.1f}"
         _append_risk(
-            f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 仅 {upside_pts:.1f} 点"
-            f"，止损距离 {downside_pts:.1f} 点），不建议在当前位置新建仓"
+            f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 仅 {_fmt(upside_pts)} 点"
+            f"，止损距离 {_fmt(downside_pts)} 点），不建议在当前位置新建仓"
         )
 
     # hold：RR 较差（<0.5）→ 附加警告，禁止文字建议加仓
@@ -253,6 +256,21 @@ def verify_trinity_output(
         )
         if top_div_risk or state_misalign or ma_inverted or mtf_conflict:
             _cap_confidence("medium", "存在矛盾信号，high confidence 需两维度完全共振")
+
+    # ── R18：key_advice 与 entry_side=wait 矛盾修正 ──────────────────────────
+    # 若 verifier 强制将 entry_side 改为 wait（buy 信号），
+    # 但 key_advice 仍含追多措辞，在建议前加注暂缓提示
+    entry_was_forced_wait = (
+        entry_side == "wait"
+        and signal in ("buy", "strong_buy")
+        and any("[entry_side]" in c for c in corrections)
+    )
+    if entry_was_forced_wait:
+        advice = summary.get("key_advice", "")
+        _BUY_PHRASES = ("可追多", "可买入", "建议买入", "追多", "立即入场", "可入场")
+        if any(p in advice for p in _BUY_PHRASES):
+            summary["key_advice"] = "【暂缓入场：超扩延或风险收益比不足】" + advice
+            corrections.append("[key_advice] 追多建议与 entry_side=wait 矛盾，已加注暂缓提示")
 
     # ═══════════════════════════════════════════════════════════════════════════
     # 写回修正后的字段
