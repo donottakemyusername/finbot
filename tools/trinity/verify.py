@@ -184,15 +184,16 @@ def verify_trinity_output(
             f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 空间 < 止损 ${lsl:.2f} 距离）"
         )
 
-    # hold：RR 极差（<0.1）→ 附加警告，禁止文字建议加仓
-    if rr_ratio is not None and rr_ratio < 0.1 and signal == "hold":
+    # hold：RR 较差（<0.5）→ 附加警告，禁止文字建议加仓
+    if rr_ratio is not None and rr_ratio < 0.5 and signal == "hold":
+        severity = "极差" if rr_ratio < 0.2 else "较差"
         _append_risk(
-            f"风险收益比极差 {rr_ratio:.3f}（至近端压力 ${key_res:.2f} 仅"
+            f"风险收益比{severity} {rr_ratio:.2f}（至近端压力 ${key_res:.2f} 仅"
             f" {(key_res - cur_price):.2f} 点，止损距离 {(cur_price - lsl):.2f} 点）"
             f"，不建议在当前位置加仓，等待突破 ${key_res:.2f} 后确认再操作"
         )
         corrections.append(
-            f"[rr_warning] HOLD信号下RR={rr_ratio:.3f}极差，已附加key_risk警告"
+            f"[rr_warning] HOLD信号下RR={rr_ratio:.2f}{severity}，已附加key_risk警告"
         )
 
     # ── R13：黄金棒陈旧检查 ───────────────────────────────────────────────────
