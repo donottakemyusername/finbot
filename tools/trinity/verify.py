@@ -180,8 +180,11 @@ def verify_trinity_output(
     if rr_ratio is not None and rr_ratio < 1.0 and signal in ("buy", "strong_buy"):
         _cap_position("light", f"风险收益比 {rr_ratio:.2f} < 1")
         _set_entry("wait",     f"风险收益比 {rr_ratio:.2f} 不足 1")
+        upside_pts  = key_res - cur_price
+        downside_pts = cur_price - lsl
         _append_risk(
-            f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 空间 < 止损 ${lsl:.2f} 距离）"
+            f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 仅 {upside_pts:.1f} 点"
+            f"，止损距离 {downside_pts:.1f} 点），不建议在当前位置新建仓"
         )
 
     # hold：RR 较差（<0.5）→ 附加警告，禁止文字建议加仓
