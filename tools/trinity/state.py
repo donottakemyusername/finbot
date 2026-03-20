@@ -132,9 +132,8 @@ def compute_current_state(events: list[dict], total_bars: int) -> dict:
             idx_new = _ORDER_IDX.get(new_state, 0)
             fwd_gap = (idx_new - idx_old) % _N   # 正向距离
             bwd_gap = (idx_old - idx_new) % _N   # 反向距离
-            # 正向跳 >2 步 或 反向跳（快捷路径如 high_golden_cross）>= 1 步
-            if fwd_gap > 2 or (bwd_gap >= 1 and bwd_gap < _N - 1):
-                state_anomaly = True
+            # 只记录最后一次跳变是否异常（而非任意一次）
+            state_anomaly = fwd_gap > 2 or (bwd_gap >= 1 and bwd_gap < _N - 1)
             prev_state     = current_state
             current_state  = new_state
             last_event_bar = ev["bar"]

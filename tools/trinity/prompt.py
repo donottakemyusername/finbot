@@ -457,6 +457,10 @@ def call_claude_for_soft_signals(
             messages=[{"role": "user", "content": build_prompt(ticker, hard_signals, time_space)}],
         )
         raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        # 只截取第一个{到最后一个}，防止Claude在JSON后追加说明文字
+        start, end = raw.find("{"), raw.rfind("}")
+        if start != -1 and end != -1:
+            raw = raw[start: end + 1]
         return json.loads(raw)
     except json.JSONDecodeError as e:
         return _fallback(f"JSON解析失败: {e}")
