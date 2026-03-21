@@ -318,25 +318,46 @@ def compute_time_space_state(
     state_anomaly = state_daily.get("state_anomaly", False)
 
     # ── multi_timeframe_conflict：日线与周/月线方向矛盾 ──────────────────
+    # 课程定义：周线分两级处理
+    #   硬冲突（弱/极弱）→ confidence≤medium，严格限制信号
+    #   软冲突（中性偏弱）→ 仅要求轻仓+提示风险，不封锁信号（日线强时仍可买）
     daily_bull  = state_daily.get("is_bullish", False)
     daily_bear  = state_daily.get("is_bearish", False)
     weekly_bull = state_weekly.get("is_bullish", False)
     weekly_bear = state_weekly.get("is_bearish", False)
+    weekly_state_code = state_weekly.get("current_state", "unknown")
     month_bull  = state_monthly.get("is_bullish", False)
     month_bear  = state_monthly.get("is_bearish", False)
 
+    # 周线是否为"强空头"（弱/极弱 → 硬冲突）vs "弱调整期"（中性偏弱 → 软冲突）
+    weekly_hard_bear = weekly_state_code in ("weak", "extreme_weak")
+    weekly_soft_bear = weekly_state_code == "mid_weak"
+
     multi_timeframe_conflict = False
+    mtf_conflict_severity    = "none"   # "hard" | "soft" | "none"
     mtf_conflict_type = ""
-    if daily_bull and (weekly_bear or month_bear):
+
+    if daily_bull and (weekly_hard_bear or month_bear):
+        # 硬冲突：周线真空头（弱/极弱）或月线偏空
         multi_timeframe_conflict = True
+        mtf_conflict_severity    = "hard"
         parts = []
-        if weekly_bear:
-            parts.append(f"周线{state_weekly.get('state_label', '空')}")
+        if weekly_hard_bear:
+            parts.append(f"周线{state_weekly.get('state_label', '空')}（真空头）")
         if month_bear:
             parts.append(f"月线{state_monthly.get('state_label', '空')}")
         mtf_conflict_type = f"日线多头（{state_daily.get('state_label')}）但{'、'.join(parts)}，大级别偏空"
+    elif daily_bull and weekly_soft_bear:
+        # 软冲突：周线中性偏弱（正常调整期），不封锁信号，仅要求轻仓
+        multi_timeframe_conflict = True
+        mtf_conflict_severity    = "soft"
+        mtf_conflict_type = (
+            f"日线多头（{state_daily.get('state_label')}）但周线中性偏弱（调整期，非趋势反转），"
+            f"可操作但需轻仓"
+        )
     elif daily_bear and (weekly_bull or month_bull):
         multi_timeframe_conflict = True
+        mtf_conflict_severity    = "hard"
         parts = []
         if weekly_bull:
             parts.append(f"周线{state_weekly.get('state_label', '多')}")
@@ -355,5 +376,6 @@ def compute_time_space_state(
         "extreme_bars_warning":  extreme_bars_warning,  # ← True时prompt强制confidence=low
         "state_anomaly":         state_anomaly,         # ← True时prompt提示状态跳变异常
         "multi_timeframe_conflict": multi_timeframe_conflict,
+        "mtf_conflict_severity":    mtf_conflict_severity,
         "mtf_conflict_type":        mtf_conflict_type,
     }

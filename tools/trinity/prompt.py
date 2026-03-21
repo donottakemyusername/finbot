@@ -46,8 +46,8 @@ SYSTEM_PROMPT = """
 → 时空与信号矛盾时降为low
 
 【规则5】级别冲突（multi_timeframe_conflict=true）
-→ 大级别优先，confidence≤medium，position_size≤moderate
-→ key_risk必须提及周/月线方向
+→ 硬冲突（mtf_conflict_severity=hard）：大级别优先，confidence≤medium，position_size≤moderate，key_risk必须提及周/月线方向
+→ 软冲突（mtf_conflict_severity=soft）：周线中性偏弱属调整期而非趋势反转。日线强时仍可给buy/hold信号，但position_size=light，key_risk提示"周线调整期，轻仓操作"。不强制降低confidence。
 
 【规则6】止损写法
 → 做多止损 = long_stop_loss数字，做空止损 = short_stop_loss数字
@@ -255,7 +255,14 @@ def build_prompt(ticker: str, hard_signals: dict, time_space: dict) -> str:
         prev = state.get("prev_state", "unknown")
         extras.append(f"🚨 状态跳变：{STATE_LABELS.get(prev, prev)}→{state.get('state_label')}，confidence应降低。")
     if time_space.get("multi_timeframe_conflict", False):
-        extras.append(f"🚨 级别冲突：{time_space.get('mtf_conflict_type', '')} → confidence≤medium。")
+        severity = time_space.get("mtf_conflict_severity", "hard")
+        if severity == "soft":
+            extras.append(
+                f"⚠️ 周线软冲突（调整期）：{time_space.get('mtf_conflict_type', '')} "
+                f"→ 日线强时仍可buy，但position_size=light，key_risk提示轻仓。"
+            )
+        else:
+            extras.append(f"🚨 级别硬冲突：{time_space.get('mtf_conflict_type', '')} → confidence≤medium。")
     if hard_signals.get("ma_inverted", False):
         extras.append(
             "⚠️ 均线倒置（MA55 < MA233）：价格虽超越双均线，但长期趋势未修复。"
@@ -446,26 +453,43 @@ def call_claude_for_soft_signals(
     ticker: str, hard_signals: dict, time_space: dict,
     client: anthropic.Anthropic | None = None,
     model: str = "claude-haiku-4-5-20251001",
+    max_retries: int = 5,
 ) -> dict:
-    """一次Claude API调用，返回结构分类+综合信号（v2精简版）。"""
+    """一次Claude API调用，返回结构分类+综合信号（v2精简版）。
+    遇到 429 rate limit 时自动指数退避重试，最多 max_retries 次。
+    """
+    import time
+
     if client is None:
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    try:
-        resp = client.messages.create(
-            model=model, max_tokens=800,  # v2: 输出更短，从1500降到800
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_prompt(ticker, hard_signals, time_space)}],
-        )
-        raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
-        # 只截取第一个{到最后一个}，防止Claude在JSON后追加说明文字
-        start, end = raw.find("{"), raw.rfind("}")
-        if start != -1 and end != -1:
-            raw = raw[start: end + 1]
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        return _fallback(f"JSON解析失败: {e}")
-    except Exception as e:
-        return _fallback(str(e))
+
+    prompt_text = build_prompt(ticker, hard_signals, time_space)
+
+    for attempt in range(max_retries):
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=800,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt_text}],
+            )
+            raw = resp.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+            # 只截取第一个{到最后一个}，防止Claude在JSON后追加说明文字
+            start, end = raw.find("{"), raw.rfind("}")
+            if start != -1 and end != -1:
+                raw = raw[start: end + 1]
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            return _fallback(f"JSON解析失败: {e}")
+        except Exception as e:
+            err_str = str(e)
+            # 429 rate limit：指数退避后重试
+            if "429" in err_str or "rate_limit" in err_str.lower() or "overloaded" in err_str.lower():
+                if attempt < max_retries - 1:
+                    wait = 2 ** (attempt + 2)  # 4, 8, 16, 32 秒
+                    print(f"    [rate limit] {ticker} 等待 {wait}s 后重试 (第{attempt+1}次)...")
+                    time.sleep(wait)
+                    continue
+            return _fallback(err_str)
 
 
 def _fallback(err: str) -> dict:
