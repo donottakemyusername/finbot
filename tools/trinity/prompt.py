@@ -461,7 +461,10 @@ def call_claude_for_soft_signals(
     import time
 
     if client is None:
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        client = anthropic.Anthropic(
+            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            base_url="https://api.anthropic.com",
+        )
 
     prompt_text = build_prompt(ticker, hard_signals, time_space)
 

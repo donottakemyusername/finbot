@@ -411,8 +411,8 @@ def main():
                         help="Ticker symbols, space- or comma-separated")
     parser.add_argument("--no-claude", action="store_true",
                         help="Skip Claude soft analysis (fast mode, hard signals only)")
-    parser.add_argument("--horizons",  nargs="+", type=int, default=[5, 21, 63],
-                        help="Forward-return windows in trading days (default: 5 21 63)")
+    parser.add_argument("--horizons",  nargs="+", type=int, default=[5, 21, 63, 252],
+                        help="Forward-return windows in trading days (default: 5 21 63 252)")
     parser.add_argument("--output",    default=None,
                         help="Save results to CSV file path (optional)")
     args = parser.parse_args()

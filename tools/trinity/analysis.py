@@ -139,8 +139,9 @@ def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
         downside = (cur_price - lsl)     / cur_price
         rr_ratio = round(upside / downside, 2) if downside > 0 else 0
 
-    overextended = dist_ma55 > 0.15 and bb_pos > 0.80
-    poor_rr      = rr_ratio is not None and rr_ratio < 1.0
+    overextended = dist_ma55 > 0.25 and bb_pos > 0.85
+    # RR阈值调整：< 0.3 才视为极差（原 < 1.0 过于严格，近端压力不代表最终目标）
+    poor_rr      = rr_ratio is not None and rr_ratio < 0.3
 
     if signal in ("buy", "strong_buy") and (overextended or poor_rr):
         composite["position_size"] = "light"
@@ -151,7 +152,7 @@ def _enforce_hard_overrides(pattern_analysis: dict, hard_signals: dict) -> dict:
             )
         if poor_rr:
             risk_parts.append(
-                f"风险收益比{rr_ratio:.2f}<1（至压力位空间不足止损范围），不建议新建仓"
+                f"风险收益比{rr_ratio:.2f}极差（近端压力空间过小），轻仓操作注意止损"
             )
         composite["key_risk"] = "；".join(risk_parts)
 
@@ -185,7 +186,10 @@ def trinity_analysis(
     """
     ticker = ticker.upper()
     if client is None:
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        client = anthropic.Anthropic(
+            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            base_url="https://api.anthropic.com",
+        )
 
     # ── Step 1: 数据 ──────────────────────────────────────────────────────────
     dfs        = fetch_multi_timeframe(ticker)

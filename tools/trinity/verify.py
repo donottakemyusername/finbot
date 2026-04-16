@@ -131,6 +131,52 @@ def verify_trinity_output(
     if signal in ("sell", "strong_sell") and state_code in _STRONG_STATES:
         _cap_confidence("low", f"卖出信号与强状态（{state_code}）矛盾")
 
+    # ── R05b：极弱日线但周线+月线均强且月线持续≥6根 → 升为 buy(low, light)────
+    # 历史回测发现：极弱日线+周月双强是深度洗盘的典型形态，封死buy会错过大级别机会
+    # 过滤条件：月线强状态需持续≥6根K线，避免月线刚转强就触发（熊市顶部误判）
+    if state_code == "extreme_weak" and signal == "hold":
+        _weekly_state  = time_space.get("weekly_state",  {})
+        _monthly_state = time_space.get("monthly_state", {})
+        _monthly_bullish   = _monthly_state.get("is_bullish", False)
+        _monthly_bars      = _monthly_state.get("bars_in_state", 0)
+        _monthly_sustained = _monthly_bullish and _monthly_bars >= 6
+        if _weekly_state.get("is_bullish", False) and _monthly_sustained:
+            _set_signal("buy",  f"极弱日线但周线+月线均强（月线强持续{_monthly_bars}根），疑似深度洗盘")
+            _cap_confidence("low",   "极弱日线，置信度限制为low")
+            _cap_position("light",   "极弱日线，仓位限制为light")
+
+    # ── R05c：三框架共振（日强/中强+周强+月强≥3根）→ 升为 buy(medium) ──────────
+    # 三框架共振是最强形态，实时顶背离预警不应封死信号（仅是动能暂缓，非确认顶部）
+    if state_code in ("strong", "mid_strong") and signal == "hold":
+        _wk = time_space.get("weekly_state",  {})
+        _mo = time_space.get("monthly_state", {})
+        if (_wk.get("is_bullish", False)
+                and _mo.get("is_bullish", False)
+                and _mo.get("bars_in_state", 0) >= 3
+                and not top_div_valid
+                and trend_align == "bullish"):
+            _mo_bars = _mo.get("bars_in_state", 0)
+            _set_signal("buy", f"三框架共振（日{state_code}+周强+月强{_mo_bars}根），无确认顶背离")
+            if _CONFIDENCE_ORDER.index(confidence) < _CONFIDENCE_ORDER.index("medium"):
+                corrections.append(f"[confidence] {confidence} → medium：三框架共振升级")
+                confidence = "medium"
+            _cap_position("light", "三框架共振轻仓入场")
+
+    # ── R05d：日中性偏弱 + 周强 + 月强（≥4根）+ 多头排列 → 升为 buy(low) ──────
+    # 日线短暂回调但大趋势完好，回踩入场机会（SA推荐股等预筛选场景尤为适用）
+    if state_code == "mid_weak" and signal == "hold":
+        _wk = time_space.get("weekly_state",  {})
+        _mo = time_space.get("monthly_state", {})
+        if (_wk.get("is_bullish", False)
+                and _mo.get("is_bullish", False)
+                and _mo.get("bars_in_state", 0) >= 4
+                and not top_div_valid
+                and trend_align == "bullish"):
+            _mo_bars = _mo.get("bars_in_state", 0)
+            _set_signal("buy", f"日线回调但周强+月强（{_mo_bars}根），大趋势未破，回踩入场")
+            _cap_confidence("low", "日线调整期，置信度限制low")
+            _cap_position("light", "日线调整期，轻仓")
+
     # ── R06：多时间框架级别冲突 → confidence ≤ medium ─────────────────────────
     if mtf_conflict:
         _cap_confidence("medium", "多时间框架级别冲突")
@@ -161,19 +207,25 @@ def verify_trinity_output(
         summary["pullback_opportunity"] = False
         corrections.append("[pullback_opportunity] 实时顶背离预警，压制回踩入场标签")
 
-    # ── R10：底背离调整不充分 → 底背离无效（兜底校验）─────────────────────────
+    # ── R10：底背离调整不充分 → 降级为 early，降低置信度（不再直接作废）──────
+    # 调整：许多底部机会的MACD尚未穿零轴但背离已成立，直接作废会错过大级别底部
     if bot_div_valid and not adj_suff:
-        hard_signals["bot_divergence_hard_valid"] = False
-        corrections.append("[bot_div] 底背离无效：60 日内 DIF/DEA 未穿越零轴，调整不充分")
+        _cap_confidence("low", "底背离未穿越零轴，调整可能不充分")
+        corrections.append("[bot_div] 底背离降级：60 日内 DIF/DEA 未穿越零轴，降低置信度（保留背离信号）")
 
-    # ── R11：价格超扩延 → 不宜追高 ──────────────────────────────────────────────
-    # 超扩延条件：MA55偏离>15%且布林>80%，或者 overextension_hard=True（含MA233偏离>40%）
-    overextended = (dist_ma55 > 0.15 and bb_pos > 0.80) or overext_hard
-    if overextended and signal in ("buy", "strong_buy"):
+    # ── R11：价格超扩延 → 分级处理（提高阈值，原15%/80%过于保守）────────────────
+    # 轻度超扩延（15-25% / 80-85%）：仅降仓位+加警告，不强制 wait
+    # 重度超扩延（>25% / >85%）或 overext_hard：降仓位 + 强制 wait
+    overextended_warn = (dist_ma55 > 0.15 and bb_pos > 0.80) or overext_hard
+    overextended_hard = (dist_ma55 > 0.25 and bb_pos > 0.85) or overext_hard
+    if overextended_warn and signal in ("buy", "strong_buy"):
         _cap_position("light", f"超扩延（MA55偏离{dist_ma55*100:.1f}%，布林{int(bb_pos*100)}%）")
-        _set_entry("wait",    "超扩延不宜追高，等待回踩 MA55")
         ma55_str = f"${ma55_val:.2f}" if ma55_val else "MA55"
-        _append_risk(f"价格超扩延，等待回踩 {ma55_str} 附近黄金棒确认再入场")
+        if overextended_hard:
+            _set_entry("wait", "重度超扩延，等待回踩 MA55")
+            _append_risk(f"重度超扩延，建议等待回踩 {ma55_str} 附近黄金棒确认再入场")
+        else:
+            _append_risk(f"轻度超扩延，可轻仓入场但建议关注回踩 {ma55_str} 加仓机会")
 
     # ── R12：风险收益比计算 ────────────────────────────────────────────────────
     rr_ratio = None
@@ -183,19 +235,27 @@ def verify_trinity_output(
         rr_ratio = round(upside / downside, 2) if downside > 0 else 0.0
     summary["rr_ratio"] = rr_ratio
 
-    # buy/strong_buy：RR < 1 → 不建议新建仓
-    if rr_ratio is not None and rr_ratio < 1.0 and signal in ("buy", "strong_buy"):
-        _cap_position("light", f"风险收益比 {rr_ratio:.2f} < 1")
-        _set_entry("wait",     f"风险收益比 {rr_ratio:.2f} 不足 1")
+    # buy/strong_buy：RR 分级处理
+    # < 0.3  → 极差，强制 wait（近端压力太小，风险过高）
+    # 0.3~1.0 → 轻仓警告，不强制 wait（近端压力不代表最终目标，不应一票否决）
+    if rr_ratio is not None and signal in ("buy", "strong_buy"):
         upside_pts   = key_res - cur_price
         downside_pts = cur_price - lsl
-        # 根据数值大小动态选择小数位，避免小价格股票显示 "0.0 点"
         def _fmt(v: float) -> str:
             return f"{v:.3f}" if v < 0.1 else f"{v:.2f}" if v < 1 else f"{v:.1f}"
-        _append_risk(
-            f"风险收益比 {rr_ratio:.2f}（至压力 ${key_res:.2f} 仅 {_fmt(upside_pts)} 点"
-            f"，止损距离 {_fmt(downside_pts)} 点），不建议在当前位置新建仓"
-        )
+        if rr_ratio < 0.3:
+            _cap_position("light", f"风险收益比极差 {rr_ratio:.2f}（<0.3）")
+            _set_entry("wait",     f"风险收益比极差 {rr_ratio:.2f}，强制观望")
+            _append_risk(
+                f"风险收益比极差 {rr_ratio:.2f}（至压力 ${key_res:.2f} 仅 {_fmt(upside_pts)} 点"
+                f"，止损距离 {_fmt(downside_pts)} 点），不建议在当前位置新建仓"
+            )
+        elif rr_ratio < 1.0:
+            _cap_position("light", f"风险收益比 {rr_ratio:.2f} < 1，轻仓操作")
+            _append_risk(
+                f"风险收益比 {rr_ratio:.2f}（近端压力 ${key_res:.2f} 仅 {_fmt(upside_pts)} 点"
+                f"，止损距离 {_fmt(downside_pts)} 点），轻仓入场，突破压力后可加仓"
+            )
 
     # hold：RR 较差（<0.5）→ 附加警告，禁止文字建议加仓
     if rr_ratio is not None and rr_ratio < 0.5 and signal == "hold":
