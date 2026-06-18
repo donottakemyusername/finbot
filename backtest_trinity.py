@@ -170,7 +170,8 @@ def trinity_analysis_as_of(
     # ── 4. Claude 软判断（可选）───────────────────────────────────────────────
     if use_claude:
         if client is None:
-            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"),
+                                         base_url="https://api.anthropic.com")
 
         claude_input = {
             **hard_signals,
@@ -259,7 +260,8 @@ def run_backtest(
     对多个股票在同一历史日期做三位一体分析，返回结果 DataFrame。
     结果包含：信号、置信度、建议操作、以及事后实际收益率。
     """
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY")) if use_claude else None
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"),
+                                 base_url="https://api.anthropic.com") if use_claude else None
 
     import time as _time
 

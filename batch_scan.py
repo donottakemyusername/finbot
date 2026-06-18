@@ -21,7 +21,8 @@ SIGNAL_EMOJI = {
 }
 
 def scan():
-    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"),
+                                 base_url="https://api.anthropic.com")
     rows = []
     errors = []
 

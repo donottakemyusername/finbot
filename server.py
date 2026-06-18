@@ -279,7 +279,74 @@ def get_full_analysis(
     return json.dumps(result, indent=2)
 
 
-# ── Tool 8: Trinity Analysis (三位一体) ──────────────────────────────────────
+# ── Tool 8: Macro Regime ─────────────────────────────────────────────────────
+
+@mcp.tool()
+def macro_regime() -> str:
+    """
+    Classify the current macro market regime using four pillars:
+      - Yield curve (2Y/10Y/30Y via FRED)
+      - Credit spreads (IG + HY OAS via FRED)
+      - VIX and VIX term structure
+      - Fed Funds Rate + real yields + breakeven inflation
+
+    Returns regime label (GOLDILOCKS / RISK_ON / LATE_CYCLE / TIGHTENING /
+    RISK_OFF / STAGFLATION / RECESSION_RISK), risk score 0-100, equity
+    conviction adjustment, and PM-facing sector bias guidance.
+
+    Requires FRED_API_KEY in .env for full data (get free key at fred.stlouisfed.org).
+    VIX data always available via yfinance.
+    """
+    from tools.macro.regime import run_macro_regime
+    result = run_macro_regime()
+    return json.dumps(result, indent=2)
+
+
+# ── Tool 9: Portfolio Exposure ────────────────────────────────────────────────
+
+@mcp.tool()
+def portfolio_exposure(positions: list[dict]) -> str:
+    """
+    Analyze a portfolio of stock positions: sector breakdown, portfolio beta,
+    concentration flags, factor tilt (growth/value/cyclical/defensive),
+    and regime-adjusted risk notes.
+
+    Args:
+        positions: List of {ticker: str, weight: float, cost_basis?: float}
+                   weight is a decimal fraction (0.20 = 20%)
+
+    Example:
+        positions = [
+            {"ticker": "AAPL", "weight": 0.20},
+            {"ticker": "NVDA", "weight": 0.15},
+            {"ticker": "MSFT", "weight": 0.10},
+        ]
+    """
+    from tools.portfolio import run_portfolio_exposure
+    result = run_portfolio_exposure(positions)
+    return json.dumps(result, indent=2)
+
+
+# ── Tool 10: Morning Brief ────────────────────────────────────────────────────
+
+@mcp.tool()
+def morning_brief(tickers: list[str]) -> str:
+    """
+    Run a compact morning brief on a watchlist of tickers.
+    For each ticker: price, 1-day change, trinity state (time-space state,
+    signal, stop-loss, main-wave status).
+
+    Returns structured data for dashboard grid rendering.
+
+    Args:
+        tickers: List of ticker symbols, e.g. ["AAPL", "NVDA", "TSLA"]
+    """
+    import chatbot as _cb
+    result = _cb.dispatch_tool("morning_brief", {"tickers": tickers})
+    return result
+
+
+# ── Tool 11: Trinity Analysis (三位一体) ─────────────────────────────────────
 
 @mcp.tool()
 def trinity_analysis(
