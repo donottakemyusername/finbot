@@ -34,6 +34,7 @@ from tools.fundamentals import run_fundamental_analysis
 from tools.valuation import run_valuation_analysis
 from tools.deep_research import run_deep_research, get_filing_summary
 from engine.aggregator import run_full_analysis
+from engine.skills import detect_skill, skill_system_prompt_addendum
 
 load_dotenv()
 
@@ -216,6 +217,73 @@ TOOL_SCHEMAS: list[dict] = [
             "required": ["ticker"],
         },
     },
+    # ── PM Skills: Macro Regime ───────────────────────────────────────────────
+    {
+        "name": "macro_regime",
+        "description": (
+            "Classify the current macro market regime using four pillars: "
+            "yield curve (FRED), credit spreads (IG/HY OAS), VIX term structure, and Fed policy. "
+            "Returns regime label (GOLDILOCKS/RISK_ON/LATE_CYCLE/RISK_OFF/STAGFLATION/TIGHTENING/RECESSION_RISK), "
+            "risk score 0-100, equity conviction adjustment, PM-facing bias and sector guidance. "
+            "Use when PM asks about market environment, risk-on/off, macro backdrop, yield curve, "
+            "credit spreads, VIX regime, or how macro affects stock positioning."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    # ── PM Skills: Portfolio Exposure ─────────────────────────────────────────
+    {
+        "name": "portfolio_exposure",
+        "description": (
+            "Analyze a portfolio of stock positions: sector breakdown, portfolio beta, "
+            "concentration flags, factor tilt (growth/value/cyclical/defensive), and "
+            "regime-adjusted risk notes. "
+            "Use when PM asks about their book, positions, portfolio risk, sector exposure, or concentration."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "positions": {
+                    "type": "array",
+                    "description": "List of portfolio positions. Parse from user message if needed.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "ticker": {"type": "string", "description": "Stock ticker, e.g. 'AAPL'"},
+                            "weight": {"type": "number", "description": "Position weight as decimal (0.20 = 20%)"},
+                            "cost_basis": {"type": "number", "description": "Average cost basis price (optional)"},
+                        },
+                        "required": ["ticker", "weight"],
+                    },
+                },
+            },
+            "required": ["positions"],
+        },
+    },
+    # ── PM Skills: Morning Brief ──────────────────────────────────────────────
+    {
+        "name": "morning_brief",
+        "description": (
+            "Run a morning brief on a list of tickers: for each, fetch price overview "
+            "and trinity state (time-space state, signal, stop-loss, main-wave status). "
+            "Returns compact watchlist data for dashboard grid rendering. "
+            "Use when PM asks for a morning brief, watchlist scan, or overnight update on multiple stocks."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tickers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of ticker symbols to scan, e.g. ['AAPL', 'NVDA', 'TSLA']",
+                },
+            },
+            "required": ["tickers"],
+        },
+    },
 ]
 
 
@@ -327,6 +395,58 @@ def dispatch_tool(tool_name: str, tool_input: dict) -> str:
                 client=None,  # 会从环境变量读取ANTHROPIC_API_KEY
             )
             return json.dumps(result, ensure_ascii=False, indent=2)
+
+        # ── PM Skills ─────────────────────────────────────────────────────────
+        elif tool_name == "macro_regime":
+            from tools.macro.regime import run_macro_regime
+            result = run_macro_regime()
+            return json.dumps(result, indent=2)
+
+        elif tool_name == "portfolio_exposure":
+            from tools.portfolio import run_portfolio_exposure
+            result = run_portfolio_exposure(tool_input.get("positions", []))
+            return json.dumps(result, indent=2)
+
+        elif tool_name == "morning_brief":
+            from tools.trinity.analysis import trinity_analysis
+            tickers = [t.upper().strip() for t in tool_input.get("tickers", []) if t.strip()]
+            brief = []
+            for tkr in tickers[:12]:  # cap at 12 to avoid timeout
+                try:
+                    info = get_ticker_info(tkr)
+                    df   = get_price_history(tkr, years=1)
+                    price     = round(float(df["Close"].iloc[-1]), 2) if not df.empty else None
+                    price_chg = round((df["Close"].iloc[-1] / df["Close"].iloc[-2] - 1) * 100, 2) if len(df) > 1 else None
+                    chg_1y    = round((df["Close"].iloc[-1] / df["Close"].iloc[0] - 1) * 100, 2) if not df.empty else None
+                    try:
+                        tri = trinity_analysis(tkr, client=None)
+                        s   = tri.get("summary", {})
+                        brief.append({
+                            "ticker":        tkr,
+                            "name":          info.get("shortName", tkr),
+                            "price":         price,
+                            "change_1d_pct": price_chg,
+                            "change_1y_pct": chg_1y,
+                            "sector":        info.get("sector", "N/A"),
+                            "signal":        s.get("signal", "hold"),
+                            "confidence":    s.get("confidence", "low"),
+                            "state_label":   s.get("state_label", "未知"),
+                            "state_code":    s.get("state_code", "unknown"),
+                            "main_wave_locked": s.get("main_wave_locked", False),
+                            "long_stop_loss":   s.get("long_stop_loss"),
+                            "key_support":      s.get("key_support"),
+                            "key_resistance":   s.get("key_resistance"),
+                            "suggested_action": s.get("suggested_action", "")[:120],
+                        })
+                    except Exception as te:
+                        brief.append({
+                            "ticker": tkr, "name": info.get("shortName", tkr),
+                            "price": price, "change_1d_pct": price_chg,
+                            "signal": "error", "error": str(te)[:80],
+                        })
+                except Exception as e:
+                    brief.append({"ticker": tkr, "signal": "error", "error": str(e)[:80]})
+            return json.dumps({"morning_brief": brief, "count": len(brief)}, ensure_ascii=False, indent=2)
 
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
@@ -452,7 +572,12 @@ Do NOT dump raw JSON — always interpret the data.
 
 CRITICAL: If a tool returns an "error" key, report the exact error. Do NOT make up data.
 
-You support Chinese — if the user writes in Chinese, respond in Chinese.
+LANGUAGE RULE (strictly enforced):
+- If the user's message is in English → respond 100% in English. Zero Chinese characters in your text response.
+  Exception: Trinity state labels inside UI card data (JSON fields) may remain Chinese — but your prose text must be English.
+- If the user's message is in Chinese → respond in Chinese.
+- If mixed: match the dominant language of the query.
+This applies to ALL tool result summaries, table headers, bullet points, and conclusions.
 """
 
 
@@ -497,17 +622,24 @@ class StockAnalystChatbot:
         self.history: list[dict] = []
         self.stream  = stream
         self.model   = "claude-haiku-4-5-20251001"
+        self._active_skill = None
 
     def chat(self, user_message: str) -> tuple[str, dict]:
         print(f"\n👤 User: {user_message}")
         self.history.append({"role": "user", "content": user_message})
         self._tool_data: dict = {}
 
+        # Detect PM skill and build context-aware system prompt
+        skill_result = detect_skill(user_message)
+        self._active_skill = skill_result
+        addendum = skill_system_prompt_addendum(skill_result)
+        active_system = SYSTEM_PROMPT + addendum
+
         while True:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
-                system=SYSTEM_PROMPT,
+                system=active_system,
                 tools=TOOL_SCHEMAS,
                 messages=self.history,
             )
@@ -536,10 +668,10 @@ class StockAnalystChatbot:
                 preview = text[:300] + ("..." if len(text) > 300 else "")
                 print(f"\n🤖 Claude: {preview}\n")
                 self.history.append({"role": "assistant", "content": text})
-                return text, self._tool_data
+                return text, self._tool_data, self._active_skill
 
             else:
-                return f"Unexpected stop reason: {response.stop_reason}", {}
+                return f"Unexpected stop reason: {response.stop_reason}", {}, self._active_skill
 
     def reset(self):
         self.history = []
@@ -597,11 +729,12 @@ def create_api():
         import chatbot as _self
         _self.dispatch_tool = tracking_dispatch
         try:
-            response, tool_data = bot.chat(req.message)
+            response, tool_data, skill_result = bot.chat(req.message)
         except Exception as e:
             _self.dispatch_tool = original_dispatch
             return {"response": f"Error: {str(e)}", "tool_calls": tool_calls_made,
-                    "tool_data": {}, "session_id": req.session_id}
+                    "tool_data": {}, "session_id": req.session_id,
+                    "skill": "default", "layout": "default"}
         _self.dispatch_tool = original_dispatch
 
         return {
@@ -609,6 +742,8 @@ def create_api():
             "tool_calls": tool_calls_made,
             "tool_data":  tool_data,
             "session_id": req.session_id,
+            "skill":      skill_result.skill if skill_result else "default",
+            "layout":     skill_result.layout if skill_result else "default",
         }
 
     @app.delete("/chat/{session_id}")
@@ -664,8 +799,9 @@ def run_cli():
             bot.reset()
             print("🔄 Conversation reset.\n")
             continue
-        response, _ = bot.chat(user_input)
-        print(f"\nAssistant: {response}\n")
+        response, _, skill = bot.chat(user_input)
+        skill_label = f" [{skill.skill.upper().replace('_', ' ')}]" if skill and skill.skill != "default" else ""
+        print(f"\nAssistant{skill_label}: {response}\n")
 
 
 if __name__ == "__main__":

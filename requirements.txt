@@ -24,3 +24,7 @@ edgar>=5.4.0         # python-edgar wrapper
 fastapi>=0.95.0
 uvicorn>=0.22.0
 scipy>=1.11.0
+
+# Macro (FRED API — free key at fred.stlouisfed.org)
+# No additional package needed — uses requests (already above)
+# Set FRED_API_KEY in .env to enable yield curve + credit spread data

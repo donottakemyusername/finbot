@@ -6,7 +6,7 @@ import {
   Cell, Legend,
 } from "recharts";
 
-const API_BASE = "https://finbot-production-5739.up.railway.app";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://finbot-production-5739.up.railway.app";
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
 const SIG = {
@@ -24,13 +24,13 @@ const sl = (s) => (s || "neutral").toUpperCase();
 
 // Trinity 时空状态颜色
 const STATE_COLORS = {
-  extreme_strong: { bg: "bg-emerald-500/25", border: "border-emerald-400", text: "text-emerald-300", label: "极强 🔥" },
-  strong:         { bg: "bg-emerald-500/15", border: "border-emerald-500", text: "text-emerald-400", label: "强 ↑" },
-  mid_strong:     { bg: "bg-teal-500/15",    border: "border-teal-500",    text: "text-teal-400",    label: "中性偏强" },
-  mid_weak:       { bg: "bg-orange-500/15",  border: "border-orange-500",  text: "text-orange-400",  label: "中性偏弱" },
-  extreme_weak:   { bg: "bg-red-500/25",     border: "border-red-400",     text: "text-red-300",     label: "极弱 ❄️" },
-  weak:           { bg: "bg-red-500/15",     border: "border-red-500",     text: "text-red-400",     label: "弱 ↓" },
-  unknown:        { bg: "bg-white/10",        border: "border-white/20",    text: "text-white/50",    label: "未知" },
+  extreme_strong: { bg: "bg-emerald-500/25", border: "border-emerald-400", text: "text-emerald-300", label: "极强 🔥", en: "Extreme Strong 🔥" },
+  strong:         { bg: "bg-emerald-500/15", border: "border-emerald-500", text: "text-emerald-400", label: "强 ↑",   en: "Strong ↑" },
+  mid_strong:     { bg: "bg-teal-500/15",    border: "border-teal-500",    text: "text-teal-400",    label: "中性偏强", en: "Moderately Bullish" },
+  mid_weak:       { bg: "bg-orange-500/15",  border: "border-orange-500",  text: "text-orange-400",  label: "中性偏弱", en: "Moderately Bearish" },
+  extreme_weak:   { bg: "bg-red-500/25",     border: "border-red-400",     text: "text-red-300",     label: "极弱 ❄️", en: "Extreme Weak ❄️" },
+  weak:           { bg: "bg-red-500/15",     border: "border-red-500",     text: "text-red-400",     label: "弱 ↓",   en: "Weak ↓" },
+  unknown:        { bg: "bg-white/10",        border: "border-white/20",    text: "text-white/50",    label: "未知",   en: "Unknown" },
 };
 const stateColor = (code) => STATE_COLORS[code] || STATE_COLORS.unknown;
 
@@ -52,6 +52,9 @@ const TOOL_LABELS = {
   deep_research_edgar:         "📄 EDGAR研报",
   get_full_analysis:           "🔬 综合分析",
   trinity_analysis:            "☯️ 三位一体",
+  macro_regime:                "🌍 宏观环境",
+  portfolio_exposure:          "📦 持仓分析",
+  morning_brief:               "☀️ 早盘简报",
 };
 
 const GRID  = { stroke: "rgba(255,255,255,0.06)" };
@@ -957,6 +960,428 @@ function VerdictCard({ data }) {
 }
 
 // ─── Tool visualisation dispatcher ───────────────────────────────────────────
+// ─── Macro Regime Panel ───────────────────────────────────────────────────────
+const REGIME_COLORS = {
+  GOLDILOCKS:     { bg: "from-emerald-600 to-teal-700",    text: "text-emerald-300",  border: "border-emerald-500/40",  badge: "bg-emerald-500/20" },
+  RISK_ON:        { bg: "from-teal-600 to-cyan-700",       text: "text-teal-300",     border: "border-teal-500/40",     badge: "bg-teal-500/20" },
+  LATE_CYCLE:     { bg: "from-amber-600 to-orange-700",    text: "text-amber-300",    border: "border-amber-500/40",    badge: "bg-amber-500/20" },
+  TIGHTENING:     { bg: "from-orange-600 to-amber-700",    text: "text-orange-300",   border: "border-orange-500/40",   badge: "bg-orange-500/20" },
+  RISK_OFF:       { bg: "from-red-600 to-rose-700",        text: "text-red-300",      border: "border-red-500/40",      badge: "bg-red-500/20" },
+  STAGFLATION:    { bg: "from-orange-700 to-red-800",      text: "text-orange-300",   border: "border-orange-500/40",   badge: "bg-orange-500/20" },
+  RECESSION_RISK: { bg: "from-red-800 to-rose-900",        text: "text-red-300",      border: "border-red-500/40",      badge: "bg-red-500/20" },
+};
+const rc = (regime) => REGIME_COLORS[regime] || REGIME_COLORS.RISK_ON;
+
+function MacroRegimePanel({ data }) {
+  if (!data?.regime) return null;
+  const c      = rc(data.regime);
+  const p      = data.pillars || {};
+  const yield_ = p.yield_curve || {};
+  const credit = p.credit_spreads || {};
+  const vix_   = p.volatility || {};
+  const fed    = p.fed_policy || {};
+  const charts = data.chart_data || {};
+
+  const pillars = [
+    {
+      label:  "收益率曲线",
+      sub:    yield_.curve_regime || "—",
+      detail: yield_.spread_10_2_bps != null ? `10Y−2Y: ${yield_.spread_10_2_bps > 0 ? "+" : ""}${yield_.spread_10_2_bps} bps` : "需FRED密钥",
+      icon:   "📐",
+      ok:     ["steep", "normal"].includes(yield_.curve_regime),
+    },
+    {
+      label:  "信用利差",
+      sub:    `IG: ${credit.ig_regime || "—"} · HY: ${credit.hy_regime || "—"}`,
+      detail: credit.ig_spread_bps != null ? `IG ${credit.ig_spread_bps}bps · HY ${credit.hy_spread_bps}bps` : "需FRED密钥",
+      icon:   "💳",
+      ok:     ["tight", "normal"].includes(credit.ig_regime),
+    },
+    {
+      label:  "波动率 (VIX)",
+      sub:    vix_.vix_regime || "—",
+      detail: vix_.vix != null ? `VIX ${vix_.vix} · 期限结构: ${vix_.structure || "—"}` : "暂无数据",
+      icon:   "📊",
+      ok:     ["low", "normal"].includes(vix_.vix_regime),
+    },
+    {
+      label:  "美联储政策",
+      sub:    fed.policy_stance || "—",
+      detail: fed.fed_funds_rate != null ? `FFR ${fed.fed_funds_rate}% · 实际收益率 ${fed.real_yield_10y ?? "—"}%` : "需FRED密钥",
+      icon:   "🏦",
+      ok:     ["accommodative", "neutral"].includes(fed.policy_stance),
+    },
+  ];
+
+  return (
+    <div className="space-y-3">
+      {/* ── Hero card ── */}
+      <div className={`rounded-2xl bg-gradient-to-r ${c.bg} p-4 sm:p-5`}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-white/60 text-xs uppercase tracking-widest mb-1">市场环境</p>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-3xl">{data.icon}</span>
+              <span className="text-2xl font-black text-white">{data.regime_label}</span>
+            </div>
+            <p className="text-white/80 text-sm leading-relaxed max-w-xs">{data.description}</p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-white/40 text-xs mb-1">风险评分</p>
+            <p className="text-3xl font-black text-white">{data.risk_score}</p>
+            <p className="text-white/40 text-xs">/ 100</p>
+          </div>
+        </div>
+
+        {/* Risk score bar */}
+        <div className="mt-3">
+          <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
+            <div className="h-full bg-white/60 rounded-full transition-all"
+              style={{ width: `${data.risk_score}%` }} />
+          </div>
+          <div className="flex justify-between text-xs text-white/30 mt-1">
+            <span>安全</span><span>高压</span>
+          </div>
+        </div>
+
+        {/* Equity adjustment */}
+        <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-between">
+          <div>
+            <p className="text-white/60 text-xs">股票信念调整</p>
+            <p className={`text-sm font-bold mt-0.5 ${data.equity_adj > 0 ? "text-emerald-300" : data.equity_adj < 0 ? "text-red-300" : "text-white/70"}`}>
+              {data.equity_adj > 0 ? `+${data.equity_adj}` : data.equity_adj} · {data.equity_adj >= 1 ? "信号上调" : data.equity_adj <= -1 ? "信号下调" : data.equity_adj < 0 ? "降低风险" : "中性"}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-white/50 text-xs">{data.as_of}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── PM Guidance ── */}
+      <div className="bg-white/4 border border-white/8 rounded-xl p-4 space-y-2">
+        <p className="text-white/40 text-xs uppercase tracking-wider font-semibold">PM 指引</p>
+        <div className="space-y-2 text-xs">
+          <div className="flex items-start gap-2">
+            <span className="text-emerald-400 flex-shrink-0 mt-0.5">✓</span>
+            <span className="text-white/70 leading-relaxed">{data.bias}</span>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-red-400 flex-shrink-0 mt-0.5">✗</span>
+            <span className="text-white/50 leading-relaxed">规避：{data.avoid}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Four Pillars ── */}
+      <div className="grid grid-cols-2 gap-2">
+        {pillars.map(({ label, sub, detail, icon, ok }) => (
+          <div key={label} className={`rounded-xl border p-3 ${ok ? "border-emerald-500/25 bg-emerald-500/5" : "border-red-500/25 bg-red-500/5"}`}>
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-sm">{icon}</span>
+              <span className="text-white/50 text-xs font-semibold">{label}</span>
+              <span className={`ml-auto w-1.5 h-1.5 rounded-full flex-shrink-0 ${ok ? "bg-emerald-400" : "bg-red-400"}`} />
+            </div>
+            <p className={`text-xs font-bold capitalize ${ok ? "text-emerald-300" : "text-red-300"}`}>{sub}</p>
+            <p className="text-white/30 text-xs mt-0.5 leading-tight">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── VIX Chart ── */}
+      {charts.vix_history?.length > 0 && (
+        <Section title="VIX — 近3月走势">
+          <ResponsiveContainer width="100%" height={110}>
+            <AreaChart data={charts.vix_history.slice(-60)} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+              <CartesianGrid {...GRID} />
+              <XAxis dataKey="date" tick={ATICK} tickFormatter={v => v?.slice(5)} interval={Math.floor(charts.vix_history.length / 5)} />
+              <YAxis tick={ATICK} width={32} />
+              <Tooltip content={<Tip />} />
+              <ReferenceLine y={20} stroke="rgba(245,158,11,0.4)" strokeDasharray="4 4" />
+              <ReferenceLine y={25} stroke="rgba(239,68,68,0.4)" strokeDasharray="4 4" />
+              <Area dataKey="vix" stroke="#a78bfa" fill="rgba(167,139,250,0.15)" strokeWidth={1.5} dot={false} name="VIX" />
+            </AreaChart>
+          </ResponsiveContainer>
+          <div className="flex gap-4 text-xs text-white/30 mt-1">
+            <span className="flex items-center gap-1"><span className="w-3 h-px bg-amber-400 inline-block" />20 = 偏高</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-px bg-red-400 inline-block" />25 = 高压</span>
+          </div>
+        </Section>
+      )}
+
+      {/* ── Yield curve history chart ── */}
+      {charts.yield_curve_history?.length > 0 && (
+        <Section title="10Y-2Y 利差（bps）— 收益率曲线">
+          <ResponsiveContainer width="100%" height={110}>
+            <AreaChart data={charts.yield_curve_history} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+              <CartesianGrid {...GRID} />
+              <XAxis dataKey="date" tick={ATICK} tickFormatter={v => v?.slice(5)} interval={Math.floor(charts.yield_curve_history.length / 5)} />
+              <YAxis tick={ATICK} width={40} />
+              <Tooltip content={<Tip />} />
+              <ReferenceLine y={0} stroke="rgba(239,68,68,0.5)" strokeDasharray="4 4" />
+              <Area dataKey="spread" stroke="#60a5fa" fill="rgba(96,165,250,0.1)" strokeWidth={1.5} dot={false} name="10Y−2Y bps" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </Section>
+      )}
+
+      {/* ── Credit spread history ── */}
+      {charts.credit_spread_history?.length > 0 && (
+        <Section title="信用利差 — IG/HY OAS（bps）">
+          <div className="flex gap-3 text-xs mb-1">
+            <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-blue-400 inline-block" />IG OAS</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-red-400 inline-block" />HY OAS</span>
+          </div>
+          <ResponsiveContainer width="100%" height={110}>
+            <ComposedChart data={charts.credit_spread_history} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+              <CartesianGrid {...GRID} />
+              <XAxis dataKey="date" tick={ATICK} tickFormatter={v => v?.slice(5)} interval={Math.floor(charts.credit_spread_history.length / 5)} />
+              <YAxis yAxisId="ig" tick={ATICK} width={36} />
+              <YAxis yAxisId="hy" orientation="right" tick={ATICK} width={44} />
+              <Tooltip content={<Tip />} />
+              <Line yAxisId="ig" dataKey="ig" stroke="#60a5fa" strokeWidth={1.5} dot={false} name="IG OAS" />
+              <Line yAxisId="hy" dataKey="hy" stroke="#ef4444" strokeWidth={1.5} dot={false} name="HY OAS" />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// ─── Morning Brief Panel ──────────────────────────────────────────────────────
+function MorningBriefPanel({ data }) {
+  const items = data?.morning_brief || [];
+  if (!items.length) return null;
+
+  const sorted = [...items].sort((a, b) => {
+    const order = { strong_buy: 0, buy: 1, hold: 2, sell: 3, strong_sell: 4, error: 5 };
+    return (order[a.signal] ?? 3) - (order[b.signal] ?? 3);
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-white/50 text-xs uppercase tracking-wider font-semibold">☀️ Morning Brief — {items.length} Names</p>
+        <p className="text-white/30 text-xs">{new Date().toLocaleDateString()}</p>
+      </div>
+
+      {/* Summary signal count */}
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { label: "Buy",  color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/25", signals: ["buy", "strong_buy"] },
+          { label: "Hold", color: "text-amber-400",   bg: "bg-amber-500/10",   border: "border-amber-500/25",   signals: ["hold"] },
+          { label: "Sell", color: "text-red-400",     bg: "bg-red-500/10",     border: "border-red-500/25",     signals: ["sell", "strong_sell"] },
+          { label: "Error",color: "text-white/30",    bg: "bg-white/5",        border: "border-white/10",       signals: ["error"] },
+        ].map(({ label, color, bg, border, signals }) => {
+          const count = items.filter(i => signals.includes(i.signal)).length;
+          return (
+            <div key={label} className={`rounded-xl border ${border} ${bg} px-2 py-2 text-center`}>
+              <p className={`text-xl font-black ${color}`}>{count}</p>
+              <p className="text-white/40 text-xs">{label}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Ticker cards grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {sorted.map((item) => {
+          if (item.signal === "error") {
+            return (
+              <div key={item.ticker} className="rounded-xl border border-white/10 bg-white/4 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-white font-mono font-bold text-sm">{item.ticker}</span>
+                  <span className="text-red-400 text-xs">Error</span>
+                </div>
+                <p className="text-white/30 text-xs">{item.error}</p>
+              </div>
+            );
+          }
+          const c   = sc(item.signal);
+          const st  = stateColor(item.state_code || "unknown");
+          const chg = item.change_1d_pct;
+          return (
+            <div key={item.ticker} className={`rounded-xl border ${c.border} ${c.bg} p-3`}>
+              <div className="flex items-start justify-between mb-1.5">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-mono font-bold">{item.ticker}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${c.text} bg-white/5 border ${c.border}`}>
+                      {(item.signal || "HOLD").replace("_", " ").toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-white/40 text-xs truncate max-w-[120px]">{item.name}</p>
+                </div>
+                <div className="text-right">
+                  {item.price && <p className="text-white font-mono text-sm font-bold">${item.price}</p>}
+                  {chg != null && (
+                    <p className={`text-xs font-semibold ${chg >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {chg >= 0 ? "+" : ""}{chg}%
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* State + main wave */}
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${st.border} ${st.bg} ${st.text}`}>
+                  {st.en}
+                </span>
+                {item.main_wave_locked && (
+                  <span className="text-emerald-300 text-xs">🔒 Main Wave</span>
+                )}
+                <span className={`text-xs ml-auto ${c.text}`}>{item.confidence}</span>
+              </div>
+
+              {/* Stop loss */}
+              {item.long_stop_loss && (
+                <p className="text-white/30 text-xs">Stop: ${(+item.long_stop_loss).toFixed(2)}</p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Portfolio Panel ──────────────────────────────────────────────────────────
+function PortfolioPanel({ data }) {
+  if (!data?.positions) return null;
+
+  const SECTOR_COLORS = [
+    "#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6",
+    "#06b6d4","#ec4899","#84cc16","#f97316","#6366f1",
+  ];
+
+  const sectorData = Object.entries(data.sector_exposure || {})
+    .map(([sector, pct], i) => ({ sector: sector.replace(/\s/g, " "), pct, fill: SECTOR_COLORS[i % SECTOR_COLORS.length] }));
+
+  const factorData = [
+    { name: "成长型",    pct: data.factor_tilt?.growth_pct    || 0, color: "#3b82f6" },
+    { name: "价值型",     pct: data.factor_tilt?.value_pct     || 0, color: "#10b981" },
+    { name: "周期型",  pct: data.factor_tilt?.cyclical_pct  || 0, color: "#f59e0b" },
+    { name: "防御型", pct: data.factor_tilt?.defensive_pct || 0, color: "#8b5cf6" },
+  ].filter(f => f.pct > 0);
+
+  return (
+    <div className="space-y-3">
+      {/* ── Summary strip ── */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: "持仓数", val: data.n_positions },
+          { label: "组合Beta", val: data.portfolio_beta != null ? `${data.portfolio_beta}x` : "—" },
+          { label: "风险标记", val: data.concentration_flags?.length || 0, warn: (data.concentration_flags?.length || 0) > 0 },
+        ].map(({ label, val, warn }) => (
+          <div key={label} className="bg-white/4 border border-white/8 rounded-xl p-3 text-center">
+            <p className={`text-xl font-black ${warn ? "text-amber-400" : "text-white"}`}>{val}</p>
+            <p className="text-white/40 text-xs">{label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Concentration flags ── */}
+      {data.concentration_flags?.length > 0 && (
+        <div className="bg-amber-500/8 border border-amber-500/25 rounded-xl p-3 space-y-1.5">
+          <p className="text-amber-400 text-xs font-semibold uppercase tracking-wider">⚠️ 集中度风险</p>
+          {data.concentration_flags.map((f, i) => (
+            <p key={i} className="text-amber-300/70 text-xs leading-relaxed">• {f}</p>
+          ))}
+        </div>
+      )}
+
+      {/* ── Sector donut ── */}
+      {sectorData.length > 0 && (
+        <Section title="行业配置">
+          <div className="flex gap-4 items-center flex-wrap sm:flex-nowrap">
+            <div className="w-32 h-32 flex-shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={sectorData.slice(0, 6)}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="sector" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 8 }} />
+                  <Radar dataKey="pct" fill="#3b82f6" fillOpacity={0.3} stroke="#3b82f6" />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex-1 space-y-1.5 min-w-0">
+              {sectorData.map(({ sector, pct, fill }) => (
+                <div key={sector}>
+                  <div className="flex justify-between text-xs mb-0.5">
+                    <span className="text-white/60 truncate">{sector}</span>
+                    <span className="text-white/80 font-mono ml-2 flex-shrink-0">{pct}%</span>
+                  </div>
+                  <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: fill }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+      )}
+
+      {/* ── Factor tilt ── */}
+      {factorData.length > 0 && (
+        <Section title="因子倾斜">
+          <div className="grid grid-cols-2 gap-2">
+            {factorData.map(({ name, pct, color }) => (
+              <div key={name} className="bg-white/5 border border-white/8 rounded-lg px-3 py-2.5">
+                <div className="flex justify-between text-xs mb-1">
+                  <span style={{ color }} className="font-semibold">{name}</span>
+                  <span className="text-white/60 font-mono">{pct}%</span>
+                </div>
+                <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* ── Position table ── */}
+      <Section title="持仓明细">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-white/30 border-b border-white/8">
+                <th className="text-left pb-2 font-normal">代码</th>
+                <th className="text-right pb-2 font-normal">权重</th>
+                <th className="text-right pb-2 font-normal">Beta</th>
+                <th className="text-left pb-2 font-normal pl-2">行业</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(data.positions || []).map((pos) => (
+                <tr key={pos.ticker} className="border-b border-white/5">
+                  <td className="py-1.5 font-mono font-bold text-white">{pos.ticker}</td>
+                  <td className="py-1.5 text-right text-white/70">{pos.weight_pct}%</td>
+                  <td className="py-1.5 text-right">
+                    {pos.beta != null
+                      ? <span className={pos.beta > 1.2 ? "text-red-400" : pos.beta < 0.7 ? "text-emerald-400" : "text-white/60"}>{pos.beta}x</span>
+                      : <span className="text-white/20">—</span>
+                    }
+                  </td>
+                  <td className="py-1.5 pl-2 text-white/40 truncate max-w-[100px]">{pos.sector}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
+      {/* ── Regime note ── */}
+      {data.regime_note && (
+        <div className="flex items-start gap-2 bg-blue-500/8 border border-blue-500/20 rounded-xl px-3 py-3">
+          <span className="text-blue-400 flex-shrink-0">🌍</span>
+          <p className="text-blue-300/80 text-xs leading-relaxed">{data.regime_note}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ToolViz({ toolName, data }) {
   if (!data) return null;
 
@@ -997,6 +1422,18 @@ function ToolViz({ toolName, data }) {
 
   if (toolName === "get_stock_overview" && data.name) {
     return <OverviewCard data={data} />;
+  }
+
+  if (toolName === "macro_regime") {
+    return <MacroRegimePanel data={data} />;
+  }
+
+  if (toolName === "morning_brief") {
+    return <MorningBriefPanel data={data} />;
+  }
+
+  if (toolName === "portfolio_exposure") {
+    return <PortfolioPanel data={data} />;
   }
 
   if (toolName === "get_full_analysis") {
@@ -1120,22 +1557,25 @@ function TypingDots() {
 }
 
 const QUICK = [
-  "AAPL三位一体分析",
-  "TSLA的时空状态和主涨段",
   "NVDA综合分析",
-  "MSFT布林带+RSI分析",
+  "AAPL三位一体分析",
+  "当前宏观环境 risk-on or off?",
+  "Morning brief: AAPL, NVDA, TSLA, MSFT",
+  "分析持仓: AAPL 20%, NVDA 15%, MSFT 10%",
+  "TSLA earnings preview",
 ];
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [messages, setMessages] = useState([{
     role: "assistant",
-    content: "你好！我是 **AlphaLens** — 搭载三位一体交易系统的AI股票分析师。\n\n直接告诉我你想分析的股票，例如：\n- AAPL三位一体分析（时空状态+均线+结构）\n- TSLA现在是主涨段吗？该加仓还是做T？\n- NVDA综合分析\n- MSFT布林带+RSI分析",
+    content: "你好！我是 **AlphaLens PM** — 搭载三位一体 + 宏观环境 + 持仓分析的AI投研助理。\n\n直接告诉我你的需求，例如：\n- NVDA综合分析 / 深度研究\n- 三位一体分析 AAPL\n- 当前宏观环境是 risk-on 还是 risk-off？\n- Morning brief on AAPL, NVDA, TSLA\n- 分析我的持仓：AAPL 20%, NVDA 15%, MSFT 10%",
   }]);
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
   const [sessionId]             = useState(() => crypto.randomUUID());
   const [status, setStatus]     = useState("checking");
+  const [activeSkill, setActiveSkill] = useState(null);
   const endRef                  = useRef(null);
   const textareaRef             = useRef(null);
 
@@ -1196,11 +1636,14 @@ export default function App() {
         }
       }
       setMessages(p => [...p, {
-        role: "assistant",
+        role:       "assistant",
         content:    data.response,
         tool_calls: [...new Set(data.tool_calls || [])],
         tool_data:  data.tool_data || {},
+        skill:      data.skill || "default",
+        layout:     data.layout || "default",
       }]);
+      setActiveSkill(data.skill || null);
     } catch (e) {
       const errMsg = e.name === "AbortError"
         ? "⚠️ **请求超时。** 三位一体分析通常需要 2-3 分钟，请稍后重试。"
@@ -1222,13 +1665,21 @@ export default function App() {
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center font-bold text-sm">A</div>
           <div>
-            <p className="font-semibold text-sm">AlphaLens <span className="text-white/30 text-xs">☯️ Trinity</span></p>
-            <p className="text-white/30 text-xs hidden sm:block">Claude Sonnet · 三位一体 · MCP</p>
+            <p className="font-semibold text-sm">AlphaLens <span className="text-white/30 text-xs">PM Research Co-Pilot</span></p>
+            <p className="text-white/30 text-xs hidden sm:block">Claude · Trinity · Macro · Portfolio</p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${status === "ok" ? "bg-emerald-400" : status === "error" ? "bg-red-400" : "bg-amber-400 animate-pulse"}`} />
-          <span className="text-white/30 text-xs">{status === "ok" ? "在线" : status === "error" ? "离线" : "…"}</span>
+        <div className="flex items-center gap-2">
+          {/* Active skill badge */}
+          {activeSkill && activeSkill !== "default" && (
+            <span className="hidden sm:inline-flex items-center gap-1 text-xs bg-blue-500/15 border border-blue-500/30 text-blue-300 px-2 py-0.5 rounded-full">
+              {TOOL_LABELS[activeSkill] || activeSkill.replace("_", " ")}
+            </span>
+          )}
+          <div className="flex items-center gap-1.5">
+            <div className={`w-2 h-2 rounded-full ${status === "ok" ? "bg-emerald-400" : status === "error" ? "bg-red-400" : "bg-amber-400 animate-pulse"}`} />
+            <span className="text-white/30 text-xs">{status === "ok" ? "在线" : status === "error" ? "离线" : "…"}</span>
+          </div>
         </div>
       </div>
 
@@ -1264,7 +1715,7 @@ export default function App() {
                 e.preventDefault(); send();
               }
             }}
-            placeholder="输入股票代码或问题，例如：TSLA三位一体分析"
+            placeholder="股票分析、宏观环境、持仓分析、早盘简报…"
             style={{ minHeight: "44px", maxHeight: "120px", fontSize: "16px" }}
             className="flex-1 bg-[#161b22] border border-white/15 focus:border-blue-400/60 rounded-xl px-3.5 sm:px-4 py-2.5 sm:py-3 text-white placeholder-white/30 resize-none focus:outline-none transition-colors leading-relaxed"
           />
