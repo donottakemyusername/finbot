@@ -57,10 +57,16 @@ def _get_text(url: str) -> str:
 
 def get_cik(ticker: str) -> str | None:
     """Resolve a ticker to a zero-padded 10-digit CIK."""
+    # Use SEC's official ticker mapping first.  The browse-edgar search endpoint
+    # can return an unrelated company for short or ambiguous ticker symbols.
     try:
-        data = _get(f"{EDGAR_BASE}/submissions/", params={"action": "getcompany",
-                                                           "company": ticker,
-                                                           "output": "json"})
+        tickers_json = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers=HEADERS, timeout=15,
+        ).json()
+        for entry in tickers_json.values():
+            if entry.get("ticker", "").upper() == ticker.upper():
+                return str(entry["cik_str"]).zfill(10)
     except Exception:
         pass
 
@@ -78,18 +84,6 @@ def get_cik(ticker: str) -> str | None:
         match = re.search(r"CIK=(\d+)", resp.text)
         if match:
             return match.group(1).zfill(10)
-    except Exception:
-        pass
-
-    # Try the company_tickers.json endpoint (most reliable)
-    try:
-        tickers_json = requests.get(
-            "https://www.sec.gov/files/company_tickers.json",
-            headers=HEADERS, timeout=15,
-        ).json()
-        for entry in tickers_json.values():
-            if entry.get("ticker", "").upper() == ticker.upper():
-                return str(entry["cik_str"]).zfill(10)
     except Exception:
         pass
 

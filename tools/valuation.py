@@ -127,6 +127,20 @@ def _residual_income(
 WEIGHTS = {"dcf": 0.35, "owner_earnings": 0.35, "ev_ebitda": 0.20, "residual_income": 0.10}
 
 
+def _normalized_growth_rate(value: object, default: float = 0.05) -> float:
+    """Normalize provider percentages and bound a one-stage forecast assumption."""
+    try:
+        growth = float(value)
+    except (TypeError, ValueError):
+        return default
+    if growth != growth:
+        return default
+    if abs(growth) > 1:
+        growth /= 100
+    # A five-year single-stage DCF is not credible with triple-digit growth.
+    return min(max(growth, -0.50), 0.30)
+
+
 def run_valuation_analysis(
     ticker: str,
     end_date: str | None = None,
@@ -173,7 +187,7 @@ def run_valuation_analysis(
     if li_curr.get("working_capital") and li_prev.get("working_capital"):
         wc_change = li_curr["working_capital"] - li_prev["working_capital"]
 
-    g = float(m0.get("earnings_growth") or 0.05)
+    g = _normalized_growth_rate(m0.get("earnings_growth"))
 
     dcf_val = _dcf(li_curr.get("free_cash_flow"), growth_rate=g)
     oe_val  = _owner_earnings(
@@ -215,7 +229,8 @@ def run_valuation_analysis(
     weighted_gap = sum(gaps[k] * WEIGHTS[k] for k in gaps) / total_weight
 
     signal     = "bullish" if weighted_gap > 0.15 else "bearish" if weighted_gap < -0.15 else "neutral"
-    confidence = round(min(abs(weighted_gap) / 0.30 * 100, 100))
+    model_coverage = total_weight / sum(WEIGHTS.values())
+    confidence = round(min(abs(weighted_gap) / 0.30 * 100, 100) * model_coverage)
 
     methods = {}
     for name, (val, weight) in method_vals.items():
@@ -235,6 +250,11 @@ def run_valuation_analysis(
         "overall_signal": signal,
         "confidence": confidence,
         "weighted_gap_%": round(weighted_gap * 100, 1),
+        "assumptions": {
+            "forecast_growth_rate": g,
+            "growth_source": "earnings_growth, normalized and bounded to [-50%, 30%]",
+            "available_model_weight_%": round(model_coverage * 100),
+        },
         "interpretation": (
             "Stock appears undervalued" if signal == "bullish" else
             "Stock appears overvalued"  if signal == "bearish" else
