@@ -2,7 +2,24 @@
   "permissions": {
     "allow": [
       "Bash(python:*)",
-      "Bash(iconv -f utf-8 -t utf-8)"
+      "Bash(iconv -f utf-8 -t utf-8)",
+      "Bash(python quant_gt_model.py)",
+      "Bash(python -c ' *)",
+      "Bash(python quant_gt_model.py --cap 1.0)",
+      "Bash(python quant_gt_model.py --cap 1.5)",
+      "Bash(python momentum_crash_test.py --no-vix)",
+      "Bash(python \"C:\\\\Users\\\\bowen\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-bowen-PycharmProjects-mcp-finbot\\\\656f9e1c-2b03-48b7-9ed4-417ed213f41c\\\\scratchpad\\\\crash_features.py\")",
+      "Bash(PYTHONPATH=\"C:\\\\Users\\\\bowen\\\\PycharmProjects\\\\mcp-finbot\" python \"C:\\\\Users\\\\bowen\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-bowen-PycharmProjects-mcp-finbot\\\\656f9e1c-2b03-48b7-9ed4-417ed213f41c\\\\scratchpad\\\\crash_features.py\")",
+      "Bash(PYTHONPATH=\"C:\\\\Users\\\\bowen\\\\PycharmProjects\\\\mcp-finbot\" python \"C:\\\\Users\\\\bowen\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-bowen-PycharmProjects-mcp-finbot\\\\656f9e1c-2b03-48b7-9ed4-417ed213f41c\\\\scratchpad\\\\zval.py\")",
+      "Bash(PYTHONPATH=\"C:\\\\Users\\\\bowen\\\\PycharmProjects\\\\mcp-finbot\" python \"C:\\\\Users\\\\bowen\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-bowen-PycharmProjects-mcp-finbot\\\\656f9e1c-2b03-48b7-9ed4-417ed213f41c\\\\scratchpad\\\\final_compare.py\")",
+      "Bash(node -e ' *)",
+      "Bash(cd \"/c/Users/bowen/PycharmProjects/cfa-quiz\" && ls)",
+      "Read(//c/Users/bowen/PycharmProjects/cfa-quiz/**)",
+      "Bash(node --check app.js)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\bowen\\PycharmProjects\\cfa-quiz\\data",
+      "C:\\Users\\bowen\\PycharmProjects\\cfa-quiz"
     ]
   }
 }

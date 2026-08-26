@@ -761,6 +761,34 @@ def create_api():
     def health():
         return {"status": "ok"}
 
+    # ── Quant GT prediction endpoints ─────────────────────────────────────────
+    try:
+        from pydantic import BaseModel as _BM
+
+        class QuantGTRequest(_BM):
+            month: str          # "2026-08"
+            tickers: list[str]  # ["AAPL", "NVDA", ...]
+
+    except ImportError:
+        pass
+
+    @app.post("/quant-gt/predict")
+    def quant_gt_predict(req: QuantGTRequest):
+        try:
+            from quant_gt_model import predict_month
+            result = predict_month(req.month, req.tickers)
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
+    @app.get("/quant-gt/history")
+    def quant_gt_history(n: int = 12):
+        try:
+            from quant_gt_model import get_history
+            return {"rows": get_history(n)}
+        except Exception as e:
+            return {"error": str(e), "rows": []}
+
     return app
 
 
