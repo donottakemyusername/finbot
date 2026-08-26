@@ -85,6 +85,23 @@ def get_financial_metrics_from_yfinance(ticker: str) -> list[dict]:
         return []
     if not info:
         return []
+    # Do not manufacture per-share metrics when Yahoo does not provide share count.
+    # A company-wide cash flow divided by 1 is a plausible-looking but invalid value.
+    shares_outstanding = info.get('sharesOutstanding')
+    free_cash_flow = info.get('freeCashflow')
+    fcf_per_share = (
+        free_cash_flow / shares_outstanding
+        if free_cash_flow is not None and shares_outstanding and shares_outstanding > 0
+        else None
+    )
+
+    def _growth_rate(value):
+        try:
+            rate = float(value)
+        except (TypeError, ValueError):
+            return None
+        return rate / 100 if abs(rate) > 1 else rate
+
     # Map yfinance keys to financialdatasets field names
     metrics = {
         'ticker':                   ticker.upper(),
@@ -96,13 +113,13 @@ def get_financial_metrics_from_yfinance(ticker: str) -> list[dict]:
         'return_on_assets':         info.get('returnOnAssets'),
         'asset_turnover':           None,
         # Growth
-        'revenue_growth':           info.get('revenueGrowth'),
-        'earnings_growth':          info.get('earningsGrowth'),
+        'revenue_growth':           _growth_rate(info.get('revenueGrowth')),
+        'earnings_growth':          _growth_rate(info.get('earningsGrowth')),
         'book_value_growth':        None,
         # Health
         'current_ratio':            info.get('currentRatio'),
         'debt_to_equity':           (info.get('debtToEquity') or 0) / 100 if info.get('debtToEquity') else None,
-        'free_cash_flow_per_share': info.get('freeCashflow') / max(info.get('sharesOutstanding', 1), 1) if info.get('freeCashflow') else None,
+        'free_cash_flow_per_share': fcf_per_share,
         'earnings_per_share':       info.get('trailingEps'),
         # Valuation
         'price_to_earnings_ratio':  info.get('trailingPE'),
