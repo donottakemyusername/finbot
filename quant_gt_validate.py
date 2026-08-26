@@ -1336,13 +1336,13 @@ QUANT_GT_PICKS: dict[str, dict] = {
     ),
     "2026-07": dict(
         analysis_date=date(2026, 7, 1),
-        end_date=None,  # 持仓进行中（截至 2026-07-15 约 10 交易日）
+        end_date=date(2026, 7, 31),
         picks=[
-            ("SNDK", -22.55),
-            ("MXL",  -25.56),
-            ("MRVL", -26.98),
-            ("INTC", -23.71),
-            ("DOCN", -20.50),
+            ("SNDK", -39.34),
+            ("MXL",  -42.06),
+            ("MRVL", -31.49),
+            ("INTC", -31.13),
+            ("DOCN", -20.88),
         ],
     ),
 }

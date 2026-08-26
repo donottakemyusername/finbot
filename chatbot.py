@@ -775,7 +775,7 @@ def create_api():
     @app.post("/quant-gt/predict")
     def quant_gt_predict(req: QuantGTRequest):
         try:
-            from quant_gt_serve import predict_month
+            from quant_gt_model import predict_month
             result = predict_month(req.month, req.tickers)
             return result
         except Exception as e:
@@ -784,7 +784,7 @@ def create_api():
     @app.get("/quant-gt/history")
     def quant_gt_history(n: int = 12):
         try:
-            from quant_gt_serve import get_history
+            from quant_gt_model import get_history
             return {"rows": get_history(n)}
         except Exception as e:
             return {"error": str(e), "rows": []}
