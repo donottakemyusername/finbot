@@ -126,6 +126,55 @@ def _residual_income(
 
 WEIGHTS = {"dcf": 0.35, "owner_earnings": 0.35, "ev_ebitda": 0.20, "residual_income": 0.10}
 
+# Plausibility bounds; violations produce a data_quality_flag instead of a signal.
+_IV_RATIO_MIN  = 0.1    # intrinsic value must be >= 0.1× market cap
+_IV_RATIO_MAX  = 10.0   # intrinsic value must be <= 10× market cap
+_GAP_PCT_LIMIT = 500.0  # |weighted_gap_%| must be <= 500%
+
+
+def _sanity_check(result: dict, market_cap: float) -> dict:
+    """Mutate result in-place: replace signal with data_quality_flag when bounds are breached."""
+    flags: list[str] = []
+
+    for name, data in result.get("methods", {}).items():
+        iv = data.get("intrinsic_value")
+        if iv and iv > 0 and market_cap > 0:
+            ratio = iv / market_cap
+            if ratio > _IV_RATIO_MAX:
+                flags.append(
+                    f"{name}: intrinsic value is {ratio:.0f}\u00d7 market cap "
+                    f"(ceiling {_IV_RATIO_MAX:.0f}\u00d7) — likely a unit mismatch"
+                )
+            elif ratio < _IV_RATIO_MIN:
+                flags.append(
+                    f"{name}: intrinsic value is {ratio:.3f}\u00d7 market cap "
+                    f"(floor {_IV_RATIO_MIN:.1f}\u00d7)"
+                )
+
+    gap = abs(result.get("weighted_gap_%") or 0)
+    if gap > _GAP_PCT_LIMIT:
+        flags.append(
+            f"Weighted gap {result['weighted_gap_%']:.1f}% exceeds \u00b1{_GAP_PCT_LIMIT:.0f}% "
+            f"plausibility bound — review growth-rate inputs"
+        )
+
+    if flags:
+        result["data_quality_flag"]    = True
+        result["data_quality_reasons"] = flags
+        result["data_quality_note"] = (
+            "Valuation output exceeded sanity bounds. "
+            "Do not act on this signal without manually reviewing input data."
+        )
+        result["overall_signal"]  = "data_quality_flag"
+        result["confidence"]      = 0
+        result["interpretation"]  = (
+            "\u26a0\ufe0f Data quality flag — valuation requires manual review before use."
+        )
+    else:
+        result["data_quality_flag"] = False
+
+    return result
+
 
 def _normalized_growth_rate(value: object, default: float = 0.05) -> float:
     """Normalize provider percentages and bound a one-stage forecast assumption."""
@@ -244,7 +293,7 @@ def run_valuation_analysis(
             "weight_%": round(weight * 100),
         }
 
-    return {
+    result = {
         "ticker": ticker,
         "market_cap": round(market_cap, 2),
         "overall_signal": signal,
@@ -262,3 +311,4 @@ def run_valuation_analysis(
         ),
         "methods": methods,
     }
+    return _sanity_check(result, market_cap)

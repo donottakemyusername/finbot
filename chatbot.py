@@ -582,9 +582,83 @@ This applies to ALL tool result summaries, table headers, bullet points, and con
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3b. POST-PROCESSING: strip formula leaks from chatbot output
+# 3b. POST-PROCESSING: strip formula leaks + citation verification
 # ─────────────────────────────────────────────────────────────────────────────
 import re as _re
+
+
+def _flatten_tool_numbers(obj: object, out: list | None = None) -> list[float]:
+    """Recursively collect every numeric leaf value from tool result payloads."""
+    if out is None:
+        out = []
+    if isinstance(obj, bool):
+        pass
+    elif isinstance(obj, (int, float)):
+        out.append(float(obj))
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _flatten_tool_numbers(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            _flatten_tool_numbers(item, out)
+    return out
+
+
+_SUFFIX_MULT = {"T": 1e12, "B": 1e9, "M": 1e6, "K": 1e3}
+_DOLLAR_RE   = _re.compile(r'\$\s*([\d,]+\.?\d*)\s*([TBMKtbmk])?\b')
+_PCT_RE      = _re.compile(r'(-?[\d]+\.?\d+)%')
+
+
+def _extract_narrative_numbers(text: str) -> list[tuple[str, float]]:
+    """Return (raw_snippet, numeric_value) for dollar amounts and percentages."""
+    found: list[tuple[str, float]] = []
+    for m in _DOLLAR_RE.finditer(text):
+        val = float(m.group(1).replace(",", ""))
+        val *= _SUFFIX_MULT.get((m.group(2) or "").upper(), 1)
+        found.append((m.group(0), val))
+    for m in _PCT_RE.finditer(text):
+        val = float(m.group(1))
+        if abs(val) >= 1:  # ignore sub-1% rounding noise
+            found.append((m.group(0), val))
+    return found
+
+
+def _verify_narrative_citations(
+    text: str,
+    tool_data: dict,
+    rel_tol: float = 0.05,
+) -> list[str]:
+    """Return warning strings for narrative numbers not traceable to any tool result.
+
+    Checks dollar amounts and percentages; uses rel_tol relative tolerance to
+    allow for rounding and unit shorthand (e.g. $1.2B ≈ 1,200,000,000).
+    Each percentage is also checked against its /100 equivalent to handle
+    providers that return ratios as decimals.
+    """
+    if not tool_data:
+        return []
+    known = _flatten_tool_numbers(tool_data)
+    if not known:
+        return []
+
+    warnings: list[str] = []
+    for raw, val in _extract_narrative_numbers(text):
+        if val == 0:
+            continue
+        candidates = [val, val / 100, val * 100]  # handle unit variants
+        matched = any(
+            abs(c - k) / max(abs(k), 1e-9) < rel_tol
+            for c in candidates
+            for k in known
+            if k != 0
+        )
+        if not matched:
+            warnings.append(
+                f"Narrative value '{raw}' (≈{val:.4g}) has no match in tool results "
+                f"(±{int(rel_tol*100)}% tolerance)"
+            )
+    return warnings
+
 
 def _strip_formula_leaks(text: str) -> str:
     """Remove formula explanations that Claude sometimes adds despite instructions.
@@ -665,6 +739,12 @@ class StockAnalystChatbot:
             elif response.stop_reason == "end_turn":
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
                 text = _strip_formula_leaks(text)
+                citation_warnings = _verify_narrative_citations(text, self._tool_data)
+                if citation_warnings:
+                    print(f"  ⚠️  Citation warnings ({len(citation_warnings)}):")
+                    for w in citation_warnings:
+                        print(f"     {w}")
+                self._citation_warnings = citation_warnings
                 preview = text[:300] + ("..." if len(text) > 300 else "")
                 print(f"\n🤖 Claude: {preview}\n")
                 self.history.append({"role": "assistant", "content": text})
@@ -734,16 +814,18 @@ def create_api():
             _self.dispatch_tool = original_dispatch
             return {"response": f"Error: {str(e)}", "tool_calls": tool_calls_made,
                     "tool_data": {}, "session_id": req.session_id,
-                    "skill": "default", "layout": "default"}
+                    "skill": "default", "layout": "default",
+                    "citation_warnings": []}
         _self.dispatch_tool = original_dispatch
 
         return {
-            "response":   response,
-            "tool_calls": tool_calls_made,
-            "tool_data":  tool_data,
-            "session_id": req.session_id,
-            "skill":      skill_result.skill if skill_result else "default",
-            "layout":     skill_result.layout if skill_result else "default",
+            "response":          response,
+            "tool_calls":        tool_calls_made,
+            "tool_data":         tool_data,
+            "session_id":        req.session_id,
+            "skill":             skill_result.skill if skill_result else "default",
+            "layout":            skill_result.layout if skill_result else "default",
+            "citation_warnings": getattr(bot, "_citation_warnings", []),
         }
 
     @app.delete("/chat/{session_id}")

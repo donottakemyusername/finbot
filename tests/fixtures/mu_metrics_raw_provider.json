@@ -1,0 +1,28 @@
+[
+  {
+    "_fixture_note": "MU as-returned by buggy provider: earnings_growth=13.685 (percent-scale, not decimal). This is the pre-fix bug case.",
+    "ticker": "MU",
+    "report_period": "ttm",
+    "return_on_equity": 0.66638,
+    "net_margin": 0.55906,
+    "operating_margin": 0.80370003,
+    "return_on_assets": 0.3487,
+    "asset_turnover": null,
+    "revenue_growth": 3.457,
+    "earnings_growth": 13.685,
+    "book_value_growth": null,
+    "current_ratio": 3.425,
+    "debt_to_equity": 0.0633,
+    "free_cash_flow_per_share": null,
+    "earnings_per_share": 45.34,
+    "price_to_earnings_ratio": 20.577194,
+    "price_to_book_ratio": 10.457546,
+    "price_to_sales_ratio": null,
+    "dividend_yield": 0.06,
+    "payout_ratio": 0.0112,
+    "market_cap": 1053689895000.78,
+    "enterprise_value": 1034043916288,
+    "ebitda": 68222001152,
+    "enterprise_value_to_ebitda_ratio": null
+  }
+]
